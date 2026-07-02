@@ -1,0 +1,35 @@
+{
+  "name": "@siyu1017/object-inspector",
+  "version": "1.0.0",
+  "description": "A Chrome DevTools-inspired JavaScript object inspector built for high-performance applications",
+  "type": "module",
+  "main": "dist/index.umd.js",
+  "module": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "npm i && rollup -c",
+    "dev": "rollup -c -w"
+  },
+  "author": "Siyu1017",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Siyu1017/object-inspector.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Siyu1017/object-inspector/issues"
+  },
+  "homepage": "https://github.com/Siyu1017/object-inspector#readme",
+  "devDependencies": {
+    "@rollup/plugin-terser": "^1.0.0",
+    "@rollup/plugin-typescript": "^11.1.0",
+    "rollup": "^4.62.2",
+    "rollup-plugin-postcss": "^4.0.2",
+    "tslib": "^2.8.1"
+  }
+}
