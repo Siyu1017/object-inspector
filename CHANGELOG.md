@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed missing event listener registration for `DefaultViewportProvider`
+
 ## [1.1.0] - 2026-07-04
 
 ### Added

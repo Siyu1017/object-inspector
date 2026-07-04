@@ -1054,7 +1054,6 @@ class ObjectInspector {
             }, 33);
         };
         this.defaultViewportProvider = new DefaultViewportProvider(this.inspectorEl);
-        this.viewportProvider = this.defaultViewportProvider;
         this.attachViewportProvider(this.defaultViewportProvider);
         this.rowsEl.style.height = `${(this.nodeManager.findChildrenSize(this.nodeManager.root) + 1) * ROW_HEIGHT}px`;
         this.render();
@@ -1401,7 +1400,7 @@ class ObjectInspector {
         });
         this.rowsEl.style.width = `${maxWidth}px`;
     };
-    requestRender = throttle((...arg) => this.render(...arg), 33);
+    requestRender = throttle((...arg) => this.render(...arg), 66);
 }
 
 export { ObjectInspector as default };

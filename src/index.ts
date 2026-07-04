@@ -17,7 +17,7 @@ class ObjectInspector {
     private onScroll;
     private onResize;
 
-    private viewportProvider: ViewportProvider;
+    private viewportProvider!: ViewportProvider;
     private defaultViewportProvider: ViewportProvider;
 
     static readonly version: string = __VERSION__;
@@ -133,11 +133,10 @@ class ObjectInspector {
             timeout = setTimeout(() => {
                 this.render(topTolerance, bottomTolerance);
                 timeout = null;
-            }, 33);
+            }, 33)
         }
 
         this.defaultViewportProvider = new DefaultViewportProvider(this.inspectorEl);
-        this.viewportProvider = this.defaultViewportProvider;
         this.attachViewportProvider(this.defaultViewportProvider);
 
         this.rowsEl.style.height = `${(this.nodeManager.findChildrenSize(this.nodeManager.root) + 1) * ROW_HEIGHT}px`;
@@ -531,7 +530,7 @@ class ObjectInspector {
         this.rowsEl.style.width = `${maxWidth}px`;
     }
 
-    private requestRender = throttle((...arg) => this.render(...arg), 33);
+    private requestRender = throttle((...arg) => this.render(...arg), 66);
 }
 
 export default ObjectInspector;
