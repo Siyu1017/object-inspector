@@ -1,77 +1,106 @@
-import { clone, isElement, throttle } from "./utils";
+import { clone, EventEmitter, isElement, throttle } from "./utils";
 import styles from "./index.module.css";
 import { ROW_HEIGHT, ROW_INDENT } from "./constants";
-import { NodeManager, Node } from "./nodeManager";
-
-type Row = {
-    row: HTMLDivElement,
-    index: number,
-    updatePosition: (index: number) => void,
-    updateMaxWidth: (width?: number) => void,
-    measureWidth: () => void
-}
+import { NodeManager } from "./nodeManager";
+import { DefaultViewportProvider, ViewportProvider } from "./viewportProvider";
+import { Node, ObjectInspectorOptions, Row, ViewportState } from "./types";
 
 class ObjectInspector {
-    private nodeManager: NodeManager;
-    private rows: Map<number, Row>;
+    private readonly nodeManager: NodeManager;
+    private readonly rows: Map<number, Row>;
+    private readonly options: ObjectInspectorOptions;
 
-    private container = document.createElement('div');
-    private rowsEl = document.createElement('div');
-    private menuEl = document.createElement('div');
+    private readonly inspectorEl = document.createElement('div');
+    private readonly rowsEl = document.createElement('div');
+    private readonly menuEl = document.createElement('div');
 
-    static version: string = __VERSION__;
+    private onScroll;
+    private onResize;
 
-    get height() {
-        return this.nodeManager.root.visibleSize * ROW_HEIGHT;
+    private viewportProvider: ViewportProvider;
+    private defaultViewportProvider: ViewportProvider;
+
+    static readonly version: string = __VERSION__;
+    static readonly ViewportProvider: typeof ViewportProvider = ViewportProvider;
+
+    get width() {
+        let maxWidth = 0;
+        this.nodeManager.visibleNodes.forEach(node => {
+            maxWidth = node.width > maxWidth ? node.width : maxWidth;
+        })
+        return maxWidth;
     }
 
-    constructor(container: HTMLElement, obj: any) {
+    get height() {
+        return (this.nodeManager.findChildrenSize(this.nodeManager.root) + 1) * ROW_HEIGHT;
+    }
+
+    on: (event: string, listener: () => void) => void;
+    off: (event: string, listener: () => void) => void;
+
+    constructor(container: HTMLElement, obj: any, options: ObjectInspectorOptions = {
+        width: "viewport",
+        height: "viewport"
+    }) {
         if (!container)
             throw new Error('container is required');
         if (!isElement(container))
             throw new Error('container must be an element');
 
-        /*
-        if (options && getType(options) !== 'Object')
-            throw new Error('options must be an object');
+        const eventEmitter = new EventEmitter();
 
-        this.options = Object.assign({
-            shallow: false,
-            prototype: true
-        }, options);
-        */
+        this.on = (event: string, listener: () => void) => eventEmitter.on(event, listener);
+        this.off = (event: string, listener: () => void) => eventEmitter.off(event, listener);
 
         this.nodeManager = new NodeManager(clone(obj));
         this.rows = new Map();
+        this.options = options;
 
         this.nodeManager.root.on('visibleSizeChange', () => {
+            eventEmitter.emit('resize', {
+                width: this.width,
+                height: this.height
+            });
             this.render();
-            this.rowsEl.style.height = `${this.nodeManager.root.visibleSize * ROW_HEIGHT}px`;
+            this.rowsEl.style.height = `${(this.nodeManager.findChildrenSize(this.nodeManager.root) + 1) * ROW_HEIGHT}px`;
         });
 
-        this.container.className = styles.container;
+        this.inspectorEl.className = styles.inspector;
         this.rowsEl.className = styles.rows;
-        container.appendChild(this.container);
-        this.container.appendChild(this.rowsEl);
-
-        let lastWidth = this.container.offsetWidth;
-        const resizeObserver = new ResizeObserver(() => {
-            const currentWidth = this.container.offsetWidth;
-            if (lastWidth != currentWidth) {
-                this.rows.forEach(row => row.updateMaxWidth(currentWidth));
-                lastWidth = currentWidth;
-            }
+        this.menuEl.className = styles.contextmenu;
+        container.appendChild(this.inspectorEl);
+        this.inspectorEl.appendChild(this.rowsEl);
+        window.addEventListener('click', () => {
+            this.menuEl.remove();
         })
-        resizeObserver.observe(this.container);
+
+        if (this.options.width === 'intrinsic') {
+            this.inspectorEl.style.overflowX = 'visible';
+            this.inspectorEl.classList.add(styles.widthIntrinsic)
+        }
+        if (this.options.height === 'intrinsic') {
+            this.inspectorEl.style.overflowY = 'visible';
+            this.inspectorEl.classList.add(styles.heightIntrinsic)
+        }
+
+        this.onResize = (event: ViewportState) => {
+            eventEmitter.emit('resize', {
+                width: this.width,
+                height: this.height
+            });
+            if (this.options.width === 'viewport') {
+                this.rows.forEach(row => row.updateMaxWidth(this.viewportProvider.getClientWidth()));
+            }
+        }
 
         let lastTime = 0;
         let lastScroll = 0;
+        let timeout: number | null = null;
+        this.onScroll = (event: ViewportState) => {
+            const scrollTop = this.viewportProvider.getScrollTop();
+            if (scrollTop == lastScroll) return;
 
-        this.container.addEventListener('scroll', throttle(() => {
-            if (this.container.scrollTop == lastScroll) return;
-
-            const viewportSize = Math.ceil(this.container.clientHeight / ROW_HEIGHT);
-            const scrollTop = this.container.scrollTop;
+            const viewportSize = Math.ceil(this.viewportProvider.getClientHeight() / ROW_HEIGHT);
             const now = Date.now();
             const delta = now - lastTime;
             const distance = Math.abs(scrollTop - lastScroll);
@@ -81,8 +110,8 @@ class ObjectInspector {
             let topTolerance = tolerant;
             let bottomTolerance = tolerant;
 
-            if (tolerant > viewportSize * 2) {
-                tolerant = viewportSize * 2;
+            if (tolerant > viewportSize / 2) {
+                tolerant = viewportSize / 2;
             }
 
             if (scrollTop > lastScroll) {
@@ -96,17 +125,76 @@ class ObjectInspector {
             lastScroll = scrollTop;
             lastTime = now;
 
-            this.render(topTolerance, bottomTolerance);
-        }, 16));
+            this.requestRender(topTolerance, bottomTolerance);
 
+            if (timeout) {
+                clearTimeout(timeout);
+            }
+            timeout = setTimeout(() => {
+                this.render(topTolerance, bottomTolerance);
+                timeout = null;
+            }, 33);
+        }
+
+        this.defaultViewportProvider = new DefaultViewportProvider(this.inspectorEl);
+        this.viewportProvider = this.defaultViewportProvider;
+        this.attachViewportProvider(this.defaultViewportProvider);
+
+        this.rowsEl.style.height = `${(this.nodeManager.findChildrenSize(this.nodeManager.root) + 1) * ROW_HEIGHT}px`;
         this.render();
+    }
 
-        this.menuEl = document.createElement('div');
-        this.menuEl.className = styles.contextmenu;
+    destroy() {
+        this.detachCurrentProvider();
+        this.defaultViewportProvider.destroy();
+        this.nodeManager.destroy();
+        this.rows.clear();
+        this.inspectorEl.remove();
 
-        window.addEventListener('click', () => {
-            this.menuEl.remove();
+        Object.keys(this).forEach((key: string) => {
+            delete (this as any)[key];
         })
+    }
+
+    private detachCurrentProvider = () => {
+        if (!this.viewportProvider) {
+            return;
+        }
+
+        this.viewportProvider.off("scroll", this.onScroll);
+        this.viewportProvider.off("resize", this.onResize);
+    }
+
+
+    attachViewportProvider(provider: ViewportProvider) {
+        if (this.viewportProvider === provider) {
+            return;
+        }
+        this.detachCurrentProvider();
+
+        this.viewportProvider = provider;
+        provider.on('resize', this.onResize);
+        provider.on('scroll', this.onScroll);
+        this.syncViewport();
+    }
+
+    detachViewportProvider() {
+        this.attachViewportProvider(this.defaultViewportProvider);
+    }
+
+    private syncViewport = () => {
+        this.onResize({
+            clientWidth: this.viewportProvider.getClientWidth(),
+            clientHeight: this.viewportProvider.getClientHeight(),
+            scrollTop: this.viewportProvider.getScrollTop(),
+            scrollLeft: this.viewportProvider.getScrollLeft()
+        });
+        this.onScroll({
+            clientWidth: this.viewportProvider.getClientWidth(),
+            clientHeight: this.viewportProvider.getClientHeight(),
+            scrollTop: this.viewportProvider.getScrollTop(),
+            scrollLeft: this.viewportProvider.getScrollLeft()
+        });
     }
 
     private buildContextMenu = (node: Node, x: number, y: number) => {
@@ -167,8 +255,8 @@ class ObjectInspector {
         this.menuEl.style.display = 'flex';
         document.body.appendChild(this.menuEl);
 
-        const height = this.menuEl.offsetHeight;
-        const width = this.menuEl.offsetWidth;
+        const height = this.menuEl.clientHeight;
+        const width = this.menuEl.clientWidth;
         const windowHeight = window.innerHeight;
         const windowWidth = window.innerWidth;
 
@@ -181,12 +269,25 @@ class ObjectInspector {
     }
 
     private getRowRange = (topTolerance = 0, bottomTolerance = 0) => {
-        const topRow = ~~(this.container.scrollTop / ROW_HEIGHT);
-        const bottomRow = ~~((this.container.scrollTop + this.container.clientHeight) / ROW_HEIGHT);
+        const scrollTop = this.viewportProvider.getScrollTop();
+        const height = this.viewportProvider.getClientHeight();
+        const count = height / ROW_HEIGHT;
+        const topRow = ~~(scrollTop / ROW_HEIGHT);
+        const bottomRow = topRow + count;
 
-        let count = this.container.clientHeight / ROW_HEIGHT;
-        let top = topRow - ~~(count / 2);
-        let bottom = bottomRow + ~~(count / 2);
+        if (topRow - count > this.nodeManager.root.visibleSize) {
+            return {
+                start: -1,
+                end: -1
+            }
+        }
+
+        let defaultTolerance = ~~(count / 4);
+        if (defaultTolerance < 10) {
+            defaultTolerance = 10;
+        }
+        let top = topRow - defaultTolerance;
+        let bottom = bottomRow + defaultTolerance;
 
         top -= topTolerance;
         bottom += bottomTolerance;
@@ -194,25 +295,25 @@ class ObjectInspector {
         if (count > this.nodeManager.root.visibleSize) {
             return {
                 start: 0,
-                end: this.nodeManager.root.visibleSize - 1,
-                top: 0,
-                bottom: this.nodeManager.root.visibleSize - 1,
-                topTolerance: 0,
-                bottomTolerance: 0
+                end: this.nodeManager.root.visibleSize - 1
             };
         } else {
-            if (top < 0)
+            if (top < 0) {
                 top = 0;
-            if (bottom > this.nodeManager.root.visibleSize - 1)
+            }
+            if (bottom > this.nodeManager.root.visibleSize - 1) {
                 bottom = this.nodeManager.root.visibleSize - 1;
+            }
+            if (bottom < 0) {
+                bottom = 0;
+            }
+            if (top > bottom) {
+                top = bottom;
+            }
 
             return {
                 start: ~~top,
-                end: ~~bottom,
-                top: topRow,
-                bottom: bottomRow,
-                topTolerance: topTolerance,
-                bottomTolerance: bottomTolerance
+                end: ~~bottom
             };
         }
     }
@@ -263,9 +364,16 @@ class ObjectInspector {
             row.style.top = `${index * ROW_HEIGHT}px`;
         }
 
+        let lastMaxWidth = 0;
         const updateMaxWidth = (width?: number) => {
-            if (!width) width = this.container.offsetWidth;
+            // set the max-width to the viewport width when options.width is set to "viewport" mode
+            if (this.options.width === 'intrinsic') return;
+            if (width === lastMaxWidth) return;
+            if (!width) {
+                width = this.viewportProvider.getClientWidth();
+            }
             row.style.maxWidth = `${width}px`;
+            lastMaxWidth = width;
         }
 
         const measureWidth = () => {
@@ -365,9 +473,7 @@ class ObjectInspector {
 
     private render = (topTolerance = 0, bottomTolerance = 0) => {
         const rowRange = this.getRowRange(topTolerance, bottomTolerance);
-        const scrollTop = this.container.scrollTop;
-        const scrollHeight = this.container.scrollHeight;
-        const scrollLeft = this.container.scrollLeft;
+        const scrollLeft = this.inspectorEl.scrollLeft;
         const nodes = this.nodeManager.visibleNodes.slice(rowRange.start, rowRange.end + 1);
 
         const { visibleNodes } = this.nodeManager;
@@ -383,6 +489,11 @@ class ObjectInspector {
                 row.row.remove();
                 this.rows.delete(id);
             }
+        }
+
+        if (this.options.width === 'intrinsic') {
+            // set the width of rowsEl to 0px to measure the content width of each row
+            this.rowsEl.style.width = '0px';
         }
 
         let last = null;
@@ -401,14 +512,16 @@ class ObjectInspector {
             }
 
             this.rows.get(node.id)?.measureWidth();
-            this.rows.get(node.id)?.updateMaxWidth();
+            if (this.options.width === 'viewport') {
+                this.rows.get(node.id)?.updateMaxWidth();
+            }
             last = this.rows.get(node.id)?.row;
         }
 
-        if (scrollLeft > this.container.scrollWidth) {
-            this.container.scrollLeft = this.container.scrollWidth;
+        if (scrollLeft > this.inspectorEl.scrollWidth) {
+            this.inspectorEl.scrollLeft = this.inspectorEl.scrollWidth;
         } else {
-            this.container.scrollLeft = scrollLeft;
+            this.inspectorEl.scrollLeft = scrollLeft;
         }
 
         let maxWidth = 0;
@@ -417,6 +530,8 @@ class ObjectInspector {
         })
         this.rowsEl.style.width = `${maxWidth}px`;
     }
+
+    private requestRender = throttle((...arg) => this.render(...arg), 33);
 }
 
 export default ObjectInspector;

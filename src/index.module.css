@@ -1,4 +1,4 @@
-.container {
+.inspector {
     --bg: rgb(30, 30, 30);
     --color: rgb(227, 227, 227);
     --hover-bg: #33373f;
@@ -13,13 +13,13 @@
     overflow: auto;
 }
 
-.container *::selection {
+.inspector *::selection {
     background: #b8c6ff;
     color: #000;
 }
 
-.container,
-.container * {
+.inspector,
+.inspector * {
     box-sizing: border-box;
     font-family: monospace;
     font-size: 12px;
@@ -120,4 +120,13 @@
 
 .contextmenu-item:hover {
     background: rgb(36, 36, 36);
+}
+
+.widthIntrinsic,
+.widthIntrinsic .rows {
+    width: fit-content;
+}
+
+.heightIntrinsic {
+    height: fit-content;
 }

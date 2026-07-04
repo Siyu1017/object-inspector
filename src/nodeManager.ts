@@ -1,52 +1,7 @@
 import { buildPreview } from "./buildPreview";
 import { symbols } from "./symbols";
+import { Node, NodeData, NodeExpandOptions } from "./types";
 import { extractKeys, getType, isElement, isExpandable, safeString } from "./utils";
-
-export type Node = {
-    id: number,
-    parent?: Node,
-    level: number,
-    key: any,
-    valueRef: any,
-    valueType: string,
-    valueGetter: (() => any) | null,
-    hasChildren: boolean,
-    childrenLoaded: boolean,
-    children: Node[],
-    expanded: boolean,
-    visibleSize: number,
-    preview: string,
-    width: number,
-    type: string[],
-    on: (event: string, callback: () => void) => void,
-    self: any | null,
-    attachment: any | null,
-    accessGetter?: (() => void) | null,
-    increaseVisibleSize?: (size: number) => void,
-    decreaseVisibleSize?: (size: number) => void,
-    expand?: (options?: NodeExpandOptions) => void | boolean,
-    collapse?: () => void,
-    destroy?: (self?: boolean) => void,
-    childTypeLoaded?: boolean,
-    path?: string
-}
-
-type NodeData = {
-    parent?: any;
-    key?: string;
-    value: any;
-    valueGetter?: () => any;
-    preview?: string;
-    type?: string | string[];
-    originalType?: string;
-    self?: any;
-    attachment?: any;
-}
-
-type NodeExpandOptions = {
-    prototype?: boolean,
-    symbols?: boolean,
-}
 
 export class NodeManager {
     nextId: number;
@@ -64,6 +19,10 @@ export class NodeManager {
 
         this.visibleNodes = [];
         this._buildVisibleNodes(this.root);
+    }
+    destroy() {
+        this.visibleNodes = [];
+        this.removeNode(this.root);
     }
     getNodePath(node: Node): string {
         let path = node.parent?.path || '';
@@ -422,6 +381,7 @@ export class NodeManager {
                     __proto__ &&
                     !node.type.includes('dummy-object') &&
                     !node.type.includes('[[entries]]') &&
+                    !node.type.includes('chunk') &&
                     options.prototype === true
                 ) {
                     let preview;
@@ -505,6 +465,10 @@ export class NodeManager {
 
             if (self == true) {
                 this.nodeMap.delete(node.id);
+                listeners.clear();
+                Object.keys(node).forEach(key => {
+                    delete (node as any)[key];
+                })
             }
         }
 

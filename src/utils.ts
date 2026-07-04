@@ -141,3 +141,44 @@ export function extractKeys(self: any, keys: any[]) {
         accessors: accessors
     }
 }
+
+export class EventEmitter {
+    private listeners: Map<string, Function[]> = new Map();
+
+    constructor() { }
+
+    on(eventName: string, handler: Function) {
+        if (!this.listeners.has(eventName)) {
+            this.listeners.set(eventName, []);
+        }
+        (this.listeners.get(eventName) as Function[]).push(handler);
+    }
+
+    off(eventName: string, handler: Function) {
+        if (!this.listeners.has(eventName)) return;
+        const index = (this.listeners.get(eventName) as Function[]).indexOf(handler);
+        if (index === -1) return;
+        (this.listeners.get(eventName) as Function[]).splice(index, 1);
+    }
+
+    once(eventName: string, handler: Function) {
+        const onceHandler = (...args: any[]) => {
+            this.off(eventName, onceHandler);
+            handler(...args);
+        };
+        this.on(eventName, onceHandler);
+    }
+
+    emit(eventName: string, ...args: any[]) {
+        const handlers = this.listeners.get(eventName);
+        if (handlers) {
+            for (const fn of handlers.slice()) {
+                try {
+                    fn(...args);
+                } catch (e) {
+                    console.error(`Error in handler for ${eventName}:`, e);
+                }
+            }
+        }
+    }
+}

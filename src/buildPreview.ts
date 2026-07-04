@@ -2,18 +2,8 @@ import { symbols } from "./symbols";
 import { functionToCode, getType, isElement, isExpandable, safeString } from "./utils";
 import styles from "./buildPreview.module.css";
 import { PREVIEW_DEPTH, PREVIEW_MAX_ARRAY_LENGTH, PREVIEW_MAX_MAP_LENGTH, PREVIEW_MAX_OBJECT_LENGTH, PREVIEW_MAX_SET_LENGTH, PREVIEW_MAX_STRING_LENGTH } from "./constants";
+import { BuildPreviewOptions } from "./types";
 
-type BuildPreviewOptions = {
-    depth?: number,
-    detail?: boolean,
-    maxArrayLength?: number,
-    maxStringLength?: number,
-    maxSetLength?: number,
-    maxMapLength?: number,
-    maxObjectLength?: number,
-    type?: string,
-    self?: any
-}
 export function buildPreview(value: any, previewOptions?: BuildPreviewOptions): string {
     if (previewOptions && getType(previewOptions) !== 'Object') {
         throw new Error('options must be an object');

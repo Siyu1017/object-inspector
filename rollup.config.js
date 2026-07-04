@@ -1,4 +1,3 @@
-import terser from '@rollup/plugin-terser';
 import postcss from 'rollup-plugin-postcss';
 import typescript from '@rollup/plugin-typescript';
 import fs from 'fs';
@@ -39,7 +38,6 @@ export default {
             modules: true,
             extract: false,
             minimize: true
-        }),
-        terser()
+        })
     ]
 };
