@@ -1,8 +1,8 @@
 /*!
- * object-inspector v1.1.1
+ * object-inspector v1.1.2
  * Copyright (c) Siyu1017 2026
  */
-const __VERSION__ = '1.1.1';
+const __VERSION__ = '1.1.2';
 
 function getType(obj) {
     return {}.toString.call(obj).slice(8, -1);
