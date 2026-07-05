@@ -10,6 +10,9 @@
     "rootDir": "./src",
     "allowJs": true,
     "checkJs": false,
+    "declaration": true,
+    "emitDeclarationOnly": false,
+    "declarationMap": true,
     "types": ["./types/global.d.ts"]
   },
   "include": ["src/**/*"],

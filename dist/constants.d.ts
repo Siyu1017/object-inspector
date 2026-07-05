@@ -1,0 +1,9 @@
+export declare const ROW_HEIGHT = 18;
+export declare const ROW_INDENT = 16;
+export declare const PREVIEW_DEPTH = 2;
+export declare const PREVIEW_MAX_ARRAY_LENGTH = 100;
+export declare const PREVIEW_MAX_STRING_LENGTH = 1000;
+export declare const PREVIEW_MAX_SET_LENGTH = 5;
+export declare const PREVIEW_MAX_MAP_LENGTH = 5;
+export declare const PREVIEW_MAX_OBJECT_LENGTH = 5;
+//# sourceMappingURL=constants.d.ts.map

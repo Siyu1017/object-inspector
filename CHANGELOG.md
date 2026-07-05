@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed missing TypeScript declaration files in previous releases
+
 ## [1.1.1] - 2026-07-04
 
 ### Fixed
