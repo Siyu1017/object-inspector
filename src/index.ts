@@ -56,6 +56,17 @@ class ObjectInspector {
         this.rows = new Map();
         this.options = options;
 
+        const allowedValues = {
+            width: ['viewport', 'intrinsic'],
+            height: ['viewport', 'intrinsic']
+        } as const;
+
+        for (const key of Object.keys(allowedValues) as (keyof typeof allowedValues)[]) {
+            if (!allowedValues[key].includes(this.options[key] as never)) {
+                this.options[key] = allowedValues[key][0];
+            }
+        }
+
         this.nodeManager.root.on('visibleSizeChange', () => {
             eventEmitter.emit('resize', {
                 width: this.width,

@@ -983,6 +983,15 @@ class ObjectInspector {
         this.nodeManager = new NodeManager(clone(obj));
         this.rows = new Map();
         this.options = options;
+        const allowedValues = {
+            width: ['viewport', 'intrinsic'],
+            height: ['viewport', 'intrinsic']
+        };
+        for (const key of Object.keys(allowedValues)) {
+            if (!allowedValues[key].includes(this.options[key])) {
+                this.options[key] = allowedValues[key][0];
+            }
+        }
         this.nodeManager.root.on('visibleSizeChange', () => {
             eventEmitter.emit('resize', {
                 width: this.width,
