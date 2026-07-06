@@ -89,7 +89,7 @@ class ObjectInspector {
                 height: this.height
             });
             if (this.options.width === 'viewport') {
-                this.rows.forEach(row => row.updateMaxWidth(this.viewportProvider.getClientWidth()));
+                this.rows.forEach(row => row.updateMaxWidth(event.clientWidth));
             }
         }
 
@@ -97,10 +97,10 @@ class ObjectInspector {
         let lastScroll = 0;
         let timeout: number | null = null;
         this.onScroll = (event: ViewportState) => {
-            const scrollTop = this.viewportProvider.getScrollTop();
+            const scrollTop = event.scrollTop;
             if (scrollTop == lastScroll) return;
 
-            const viewportSize = Math.ceil(this.viewportProvider.getClientHeight() / ROW_HEIGHT);
+            const viewportSize = Math.ceil(event.clientHeight / ROW_HEIGHT);
             const now = Date.now();
             const delta = now - lastTime;
             const distance = Math.abs(scrollTop - lastScroll);
@@ -141,6 +141,7 @@ class ObjectInspector {
 
         this.rowsEl.style.height = `${(this.nodeManager.findChildrenSize(this.nodeManager.root) + 1) * ROW_HEIGHT}px`;
         this.render();
+        setTimeout(() => this.render(), 33);
     }
 
     destroy() {
@@ -377,7 +378,12 @@ class ObjectInspector {
 
         const measureWidth = () => {
             if (!this.nodeManager.nodeMap.get(node.id)) return;
+
+            row.style.minWidth = '0px';
+            row.style.width = 'fit-content';
             this.nodeManager.nodeMap.get(node.id).width = row.scrollWidth;
+            row.style.removeProperty('min-width');
+            row.style.removeProperty('width');
         }
 
         function initialize() {
@@ -490,31 +496,28 @@ class ObjectInspector {
             }
         }
 
-        if (this.options.width === 'intrinsic') {
-            // set the width of rowsEl to 0px to measure the content width of each row
-            this.rowsEl.style.width = '0px';
-        }
-
         let last = null;
         for (let i = nodes.length - 1; i >= 0; i--) {
             const node = nodes[i];
+            let row;
             if (!this.rows.has(node.id)) {
-                const newRow = this.createRow(node, rowRange.start + i);
+                row = this.createRow(node, rowRange.start + i);
                 if (last) {
-                    this.rowsEl.insertBefore(newRow.row, last);
+                    this.rowsEl.insertBefore(row.row, last);
                 } else {
-                    this.rowsEl.appendChild(newRow.row);
+                    this.rowsEl.appendChild(row.row);
                 }
-                this.rows.set(node.id, newRow);
+                this.rows.set(node.id, row);
             } else {
-                this.rows.get(node.id)?.updatePosition(rowRange.start + i);
+                row = this.rows.get(node.id);
+                row?.updatePosition(rowRange.start + i);
             }
 
-            this.rows.get(node.id)?.measureWidth();
+            row?.measureWidth();
             if (this.options.width === 'viewport') {
-                this.rows.get(node.id)?.updateMaxWidth();
+                row?.updateMaxWidth();
             }
-            last = this.rows.get(node.id)?.row;
+            last = row?.row;
         }
 
         if (scrollLeft > this.inspectorEl.scrollWidth) {

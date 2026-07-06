@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/@siyu1017/object-inspector)](https://www.npmjs.com/package/@siyu1017/object-inspector)
 [![npm downloads](https://img.shields.io/npm/dm/@siyu1017/object-inspector)](https://www.npmjs.com/package/@siyu1017/object-inspector)
 [![license](https://img.shields.io/npm/l/@siyu1017/object-inspector)](https://www.npmjs.com/package/@siyu1017/object-inspector)
-[![jsDelivr](https://data.jsdelivr.com/v1/package/npm/@siyu1017/object-inspector/badge)](https://www.jsdelivr.com/package/npm/@siyu1017/object-inspector)
+[![jsDelivr](https://data.jsdelivr.com/v1/stats/packages/npm/%40siyu1017%2Fobject-inspector/badge?type=hits&period=month&style=rounded)](https://www.jsdelivr.com/package/npm/@siyu1017/object-inspector)
 
 A Chrome DevTools-inspired JavaScript object inspector built for high-performance applications.
 

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Corrected width measurement when `options.width` is set to `intrinsic`
+
 ## [1.1.2] - 2026-07-05
 
 ### Fixed

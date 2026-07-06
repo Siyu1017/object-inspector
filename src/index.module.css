@@ -127,6 +127,10 @@
     width: fit-content;
 }
 
+.widthIntrinsic .row {
+    min-width: fit-content;
+}
+
 .heightIntrinsic {
     height: fit-content;
 }
