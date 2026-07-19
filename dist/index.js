@@ -164,6 +164,9 @@ class EventEmitter {
             }
         }
     }
+    dispose() {
+        this.listeners.clear();
+    }
 }
 
 function styleInject(css, ref) {
@@ -369,11 +372,75 @@ function buildPreview(value, previewOptions) {
     }
 }
 
+class Node extends EventEmitter {
+    _visibleSize = 1;
+    get visibleSize() {
+        return this._visibleSize;
+    }
+    setVisibleSize(size) {
+        this._visibleSize = size;
+        this.emit('visibleSizeChange');
+    }
+    id;
+    parent;
+    level;
+    key;
+    value;
+    valueType;
+    valueGetter;
+    hasChildren;
+    childrenLoaded = false;
+    children = [];
+    expanded = false;
+    target;
+    preview;
+    flags;
+    attachment;
+    contentWidth = 0;
+    path;
+    constructor(id, { parent, key, value, valueGetter, preview, flags = [], target, attachment = null }) {
+        super();
+        const valueType = getType(value);
+        try {
+            if (typeof preview !== 'string') {
+                preview = buildPreview(value, {
+                    self: valueType.includes('Element') ? self : null
+                });
+            }
+        }
+        catch (e) {
+            preview = `[Exception: ${e}]`;
+        }
+        this.id = id;
+        this.parent = parent;
+        this.level = (parent ? parent.level : -1) + 1;
+        this.key = key;
+        this.value = value;
+        this.valueGetter = valueGetter || null;
+        this.valueType = valueType;
+        this.hasChildren = isExpandable(value);
+        this.target = target;
+        this.preview = preview || '';
+        this.flags = flags;
+        this.attachment = attachment || null;
+    }
+    calculateVisibleSize() {
+        let size = 1;
+        if (!this.expanded)
+            return size;
+        for (const child of this.children) {
+            size += child.visibleSize;
+        }
+        return size;
+    }
+}
+
 class NodeManager {
     nextId;
     nodeMap;
     root;
     visibleNodes;
+    alive = true;
     constructor(rootValue) {
         this.nextId = 0;
         this.nodeMap = new Map();
@@ -383,23 +450,290 @@ class NodeManager {
         this.visibleNodes = [];
         this._buildVisibleNodes(this.root);
     }
-    destroy() {
+    allocateId() {
+        return this.nextId++;
+    }
+    createNode({ parent, key, value, valueGetter, preview, flags = [], target, attachment = null }) {
+        const valueType = getType(value);
+        try {
+            if (typeof preview !== 'string') {
+                preview = buildPreview(value, {
+                    self: valueType.includes('Element') ? self : null
+                });
+            }
+        }
+        catch (e) {
+            preview = `[Exception: ${e}]`;
+        }
+        const node = new Node(this.allocateId(), { parent, key, value, valueGetter, preview, flags, target, attachment });
+        node.contentWidth = 0;
+        node.path = this.getNodePath(node);
+        this.nodeMap.set(node.id, node);
+        return node;
+    }
+    accessNodeGetter(node) {
+        if (!node.valueGetter)
+            return;
+        try {
+            node.value = node.valueGetter();
+            node.valueType = getType(node.value);
+            node.hasChildren = isExpandable(node.value);
+            if (!(node.valueType.includes('Element') && !isElement(node.value))) {
+                node.target = node.value;
+            }
+            if (node.flags.includes('prototype')) {
+                node.preview = buildPreview(node.value, {
+                    detail: false
+                });
+            }
+            else {
+                node.preview = buildPreview(node.value);
+            }
+        }
+        catch (e) {
+            node.value = `[Exception: ${e}]`;
+            node.valueType = 'string';
+            node.hasChildren = false;
+            node.flags.push('styleless');
+            node.preview = node.value;
+        }
+    }
+    expandNode(node, options = {
+        prototype: true,
+        symbols: true
+    }) {
+        if (!this.alive)
+            return false;
+        if (node.parent && !this.checkParentExpanded(node))
+            return false;
+        let expandQueue = [];
+        if (!node.childrenLoaded) {
+            const type = getType(node.value);
+            const originalType = node.attachment?.originalType;
+            if (type === 'Array' &&
+                !node.flags.includes('[[prototype]]')) {
+                this.handleLargeArray(node, node.value, originalType || 'Array', options);
+            }
+            else if (node.attachment && node.flags.includes('chunk')) {
+                this.handleLargeArray(node, node.value, originalType || 'Array', options);
+            }
+            else if ((type === 'Map' || type === "Set") &&
+                !node.flags.includes('[[prototype]]')) {
+                const arr = [...node.value.keys().map((key, i) => {
+                        const value = type === 'Map' ? node.value.get(key) : key;
+                        return type === 'Map' ? { key, value } : { value };
+                    })];
+                const child = this.createNode({
+                    parent: node,
+                    key: '[[Entries]]',
+                    value: arr,
+                    preview: '',
+                    flags: ['[[entries]]'],
+                    attachment: {
+                        originalType: type
+                    }
+                });
+                node.children.push(child);
+                expandQueue.push(child);
+            }
+            else {
+                const commonKeys = Object.keys(node.value).sort();
+                const propertyKeys = Object.getOwnPropertyNames(node.value).filter(t => !commonKeys.includes(t)).sort();
+                const symbolKeys = Object.getOwnPropertySymbols(node.value);
+                const commons = extractKeys(node.value, [...commonKeys, ...symbolKeys]);
+                const properties = extractKeys(node.value, propertyKeys);
+                this.createNodes(node, commons.common, ['common']);
+                this.createNodes(node, properties.common, ['property']);
+                this.createNodes(node, commons.accessors.concat(properties.accessors), ['property', 'accessors']);
+            }
+            const __proto__ = node.value.__proto__ || Object.getPrototypeOf(node.value);
+            if (__proto__ &&
+                !node.flags.includes('dummy-object') &&
+                !node.flags.includes('[[entries]]') &&
+                !node.flags.includes('chunk') &&
+                options.prototype === true) {
+                let preview;
+                if (type.includes('Element')) {
+                    preview = getType(__proto__);
+                }
+                else {
+                    preview = buildPreview(__proto__, {
+                        detail: false
+                    });
+                }
+                const child = this.createNode({
+                    parent: node,
+                    key: '[[Prototype]]',
+                    value: __proto__,
+                    flags: ['[[prototype]]'],
+                    target: (type.includes('Element')) ? node.target : node.value,
+                    preview: preview
+                });
+                node.children.push(child);
+            }
+            node.childrenLoaded = true;
+        }
+        node.expanded = true;
+        this.updateVisibleSize(node);
         this.visibleNodes = [];
-        this.removeNode(this.root);
+        this._buildVisibleNodes(this.root);
+        for (const item of expandQueue) {
+            this.expandNode(item);
+        }
+        return true;
+    }
+    collapseNode(node) {
+        if (node.valueGetter) {
+            this.removeChildren(node);
+            node.childrenLoaded = false;
+            node.children = [];
+        }
+        for (const child of node.children) {
+            if (child.valueGetter) {
+                if (child.hasChildren && child.childrenLoaded) {
+                    this.removeChildren(child);
+                }
+                child.children = [];
+                child.childrenLoaded = false;
+                child.hasChildren = false;
+                child.value = '(...)';
+                child.valueType = 'string';
+                child.preview = child.value;
+                child.expanded = false;
+            }
+        }
+        node.expanded = false;
+        this.updateVisibleSize(node);
+        this.visibleNodes = [];
+        this._buildVisibleNodes(this.root);
+    }
+    destroyNode(node, self = true) {
+        for (const child of node.children) {
+            this.destroyNode(child);
+        }
+        node.children.length = 0;
+        node.setVisibleSize(1);
+        if (self) {
+            this.nodeMap.delete(node.id);
+            if (node.parent) {
+                const index = node.parent.children.indexOf(node);
+                if (index !== -1) {
+                    node.parent.children.splice(index, 1);
+                }
+                node.parent = undefined;
+            }
+            node.dispose();
+        }
+    }
+    createNodes(node, keys, type) {
+        if (!this.alive)
+            return;
+        keys.forEach(key => {
+            const datas = [];
+            if (type.includes('accessors')) {
+                const desc = Object.getOwnPropertyDescriptor(node.value, key);
+                const getter = desc && desc.get;
+                const setter = desc && desc.set;
+                const isSymbol = typeof key === 'symbol';
+                if (getter) {
+                    datas.push({
+                        key: 'get ' + String(key),
+                        type: 'getterFunc',
+                        value: getter,
+                        isSymbol
+                    });
+                }
+                if (setter) {
+                    datas.push({
+                        key: 'set ' + String(key),
+                        type: 'setterFunc',
+                        value: setter,
+                        isSymbol
+                    });
+                }
+            }
+            else {
+                const desc = Object.getOwnPropertyDescriptor(node.value, key);
+                const isSymbol = typeof key === 'symbol';
+                try {
+                    if (desc && desc.get) {
+                        datas.push({
+                            key: String(key),
+                            type: 'getter',
+                            value: '(...)',
+                            getter: () => {
+                                return Reflect.get(node.value, key, node.target || node.value);
+                            },
+                            isSymbol
+                        });
+                    }
+                    else {
+                        datas.push({
+                            key: String(key),
+                            type: 'common',
+                            value: node.value[key],
+                            isSymbol
+                        });
+                    }
+                }
+                catch (e) {
+                    datas.push({
+                        key: String(key),
+                        type: 'plaintext',
+                        value: `[${e}]`,
+                        isSymbol
+                    });
+                }
+            }
+            let flags = [];
+            if (node.flags.includes('[[prototype]]'))
+                flags.push('prototype');
+            if (type.includes('property'))
+                flags.push('property');
+            datas.forEach(data => {
+                let childFlags = [...flags];
+                if (data.type === 'getter') {
+                    childFlags.push('styleless');
+                    childFlags.push('getter');
+                }
+                if (data.type === 'plaintext')
+                    childFlags.push('styleless');
+                if (data.isSymbol) {
+                    childFlags.push('symbol');
+                }
+                const child = this.createNode({
+                    parent: node,
+                    key: data.key,
+                    value: data.value,
+                    flags: childFlags,
+                    preview: childFlags.includes('styleless') ? data.value : null,
+                    target: data.value,
+                    valueGetter: data.getter
+                });
+                node.children.push(child);
+            });
+        });
+    }
+    destroy() {
+        this.alive = false;
+        this.destroyNode(this.root);
+        this.root = null;
+        this.visibleNodes.length = 0;
+        this.nodeMap.clear();
     }
     getNodePath(node) {
         let path = node.parent?.path || '';
-        if (node.parent?.type.includes('[[prototype]]'))
+        if (node.parent?.flags.includes('[[prototype]]'))
             return String(node.key);
-        if (node.parent?.type.includes('dummy-object') ||
-            node.type.includes('dummy-object') ||
-            node.type.includes('chunk') ||
+        if (node.parent?.flags.includes('dummy-object') ||
+            node.flags.includes('dummy-object') ||
+            node.flags.includes('chunk') ||
             node.level === 0)
             return path;
         if (node.parent?.valueType === 'Array') {
             path += `[${node.key}]`;
         }
-        else if (node.type.includes('symbol')) {
+        else if (node.flags.includes('symbol')) {
             path += `["${String(node.key)}"]`;
         }
         else {
@@ -433,12 +767,12 @@ class NodeManager {
                     parent: node,
                     value: value,
                     preview: `[${range[0]} ${symbols.ellipsis} ${range[1]}]`,
-                    type: ['chunk'],
+                    flags: ['chunk'],
                     attachment: {
                         parentLevels: levels,
-                        startIndex: range[0]
-                    },
-                    originalType: originalType
+                        startIndex: range[0],
+                        originalType: originalType
+                    }
                 });
                 node.children.push(child);
             }
@@ -452,7 +786,7 @@ class NodeManager {
                     key: key,
                     value: value,
                     preview: buildPreview(value),
-                    type: []
+                    flags: []
                 };
                 if (originalType === 'Map') {
                     childNodeData.preview = `{${buildPreview(value.key, {
@@ -462,7 +796,7 @@ class NodeManager {
                         depth: 1,
                         type: 'styleless'
                     })}}`;
-                    childNodeData.type = ['dummy-object'];
+                    childNodeData.flags = ['dummy-object'];
                 }
                 if (originalType === 'Set') {
                     childNodeData.preview = buildPreview(value.value, {
@@ -470,331 +804,24 @@ class NodeManager {
                         depth: 1,
                         type: 'styleless'
                     });
-                    childNodeData.type = ['dummy-object'];
+                    childNodeData.flags = ['dummy-object'];
                 }
                 const child = this.createNode(childNodeData);
                 node.children.push(child);
             }
         }
     }
-    createNode({ parent, key, value, valueGetter, preview, type = 'normal', originalType, self, attachment = null }) {
-        const valueType = getType(value);
-        try {
-            if (typeof preview !== 'string') {
-                preview = buildPreview(value, {
-                    self: valueType.includes('Element') ? self : null
-                });
-            }
+    updateVisibleSize(node) {
+        let current = node;
+        while (current != undefined) {
+            const size = current.calculateVisibleSize();
+            current.setVisibleSize(size);
+            current = current.parent;
         }
-        catch (e) {
-            preview = `[Exception: ${e}]`;
-        }
-        const id = this.nextId++;
-        const listeners = new Map();
-        const node = new Proxy({
-            id: id,
-            parent: parent,
-            level: parent?.level + 1 || 0,
-            key: key,
-            valueRef: value,
-            valueType: valueType,
-            valueGetter: valueGetter || null,
-            hasChildren: isExpandable(value),
-            childrenLoaded: false,
-            children: [],
-            expanded: false,
-            visibleSize: 1,
-            preview: preview,
-            width: 0,
-            type: typeof type === 'string' ? [type] : Array.isArray(type) ? type : ['normal'],
-            on: (event, callback) => {
-                if (!listeners.has(event))
-                    listeners.set(event, []);
-                listeners.get(event).push(callback);
-            },
-            self: self || null,
-            attachment: attachment || null
-        }, {
-            set: (target, key, value) => {
-                if (key === 'visibleSize' && value < 1)
-                    throw new Error('visibleSize must be a positive integer');
-                target[key] = value;
-                if (key !== 'width') {
-                    // ignore width changes to avoid infinite loop when rendering
-                    listeners.get('visibleSizeChange')?.forEach((callback) => callback());
-                }
-                return true;
-            }
-        });
-        node.path = this.getNodePath(node);
-        node.accessGetter = () => {
-            if (!node.valueGetter)
-                return;
-            try {
-                node.valueRef = node.valueGetter();
-                node.valueType = getType(node.valueRef);
-                node.hasChildren = isExpandable(node.valueRef);
-                if (!(node.valueType.includes('Element') && !isElement(node.valueRef))) {
-                    node.self = node.valueRef;
-                }
-                if (node.type?.includes('prototype')) {
-                    node.preview = buildPreview(node.valueRef, {
-                        detail: false
-                    });
-                }
-                else {
-                    node.preview = buildPreview(node.valueRef);
-                }
-            }
-            catch (e) {
-                node.valueRef = `[Exception: ${e}]`;
-                node.valueType = 'string';
-                node.hasChildren = false;
-                node.type?.push('styleless');
-                node.preview = node.valueRef;
-            }
-        };
-        node.increaseVisibleSize = (size) => {
-            node.visibleSize += size;
-            node.parent?.increaseVisibleSize?.(size);
-        };
-        node.decreaseVisibleSize = (size) => {
-            node.visibleSize -= size;
-            node.parent?.decreaseVisibleSize?.(size);
-        };
-        const createNodes = (data, keys, nodeType, self) => {
-            keys.forEach(k => {
-                const datas = [];
-                if (nodeType.includes('accessors')) {
-                    const desc = Object.getOwnPropertyDescriptor(data, k);
-                    const getter = desc && desc.get;
-                    const setter = desc && desc.set;
-                    const isSymbol = typeof k === 'symbol';
-                    if (getter) {
-                        datas.push({
-                            key: 'get ' + String(k),
-                            type: 'getterFunc',
-                            value: getter,
-                            isSymbol
-                        });
-                    }
-                    if (setter) {
-                        datas.push({
-                            key: 'set ' + String(k),
-                            type: 'setterFunc',
-                            value: setter,
-                            isSymbol
-                        });
-                    }
-                }
-                else {
-                    const desc = Object.getOwnPropertyDescriptor(data, k);
-                    const isSymbol = typeof k === 'symbol';
-                    try {
-                        if (desc && desc.get) {
-                            datas.push({
-                                key: String(k),
-                                type: 'getter',
-                                value: '(...)',
-                                getter: () => {
-                                    return Reflect.get(data, k, self);
-                                },
-                                isSymbol
-                            });
-                        }
-                        else {
-                            datas.push({
-                                key: String(k),
-                                type: 'common',
-                                value: data[k],
-                                isSymbol
-                            });
-                        }
-                    }
-                    catch (e) {
-                        datas.push({
-                            key: String(k),
-                            type: 'plaintext',
-                            value: `[${e}]`,
-                            isSymbol
-                        });
-                    }
-                }
-                let types = [];
-                if (node.type.includes('[[prototype]]'))
-                    types.push('prototype');
-                if (nodeType.includes('property'))
-                    types.push('property');
-                datas.forEach(data => {
-                    let childType = [...types];
-                    if (data.type === 'getter') {
-                        childType.push('styleless');
-                        childType.push('getter');
-                    }
-                    if (data.type === 'plaintext')
-                        childType.push('styleless');
-                    if (data.isSymbol) {
-                        childType.push('symbol');
-                    }
-                    const child = this.createNode({
-                        parent: node,
-                        key: data.key,
-                        value: data.value,
-                        type: childType,
-                        preview: childType.includes('styleless') ? data.value : null,
-                        self: data.value,
-                        valueGetter: data.getter
-                    });
-                    node.children.push(child);
-                });
-            });
-        };
-        node.expand = (options = {
-            prototype: true,
-            symbols: true
-        }) => {
-            if (node.parent && !this.checkParentExpanded(node))
-                return false;
-            let expandQueue = [];
-            if (!node.childrenLoaded) {
-                const type = getType(node.valueRef);
-                if (type === 'Array' &&
-                    !node.type.includes('[[prototype]]')) {
-                    this.handleLargeArray(node, node.valueRef, originalType || 'Array', options);
-                }
-                else if (node.attachment && node.type.includes('chunk')) {
-                    this.handleLargeArray(node, node.valueRef, originalType || 'Array', options);
-                }
-                else if ((type === 'Map' || type === "Set") &&
-                    !node.type.includes('[[prototype]]')) {
-                    const arr = [...node.valueRef.keys().map((key, i) => {
-                            const value = type === 'Map' ? node.valueRef.get(key) : key;
-                            return type === 'Map' ? { key, value } : { value };
-                        })];
-                    const child = this.createNode({
-                        parent: node,
-                        key: '[[Entries]]',
-                        value: arr,
-                        preview: '',
-                        type: ['[[entries]]'],
-                        originalType: type
-                    });
-                    node.children.push(child);
-                    expandQueue.push(child);
-                    /*
-                    node.valueRef.keys().forEach((key: any, i: number) => {
-                        const value = type === 'Map' ? node.valueRef.get(key) : key;
-                        const childValue = type === 'Map' ? { key, value } : { value };
-                        const childPreview = buildPreview(value, {
-                            detail: false,
-                            depth: 1,
-                            type: 'styleless'
-                        });
-                        const child = this.createNode({
-                            parent: node,
-                            key: String(i),
-                            value: childValue,
-                            preview: type === 'Map' ? `{\"${safeString(key)}\" => ${childPreview}}` : childPreview,
-                            type: ['dummy-object']
-                        })
-                        node.children.push(child);
-                    })*/
-                }
-                else {
-                    const commonKeys = Object.keys(node.valueRef).sort();
-                    const propertyKeys = Object.getOwnPropertyNames(node.valueRef).filter(t => !commonKeys.includes(t)).sort();
-                    const symbolKeys = Object.getOwnPropertySymbols(node.valueRef);
-                    const commons = extractKeys(node.valueRef, [...commonKeys, ...symbolKeys]);
-                    const properties = extractKeys(node.valueRef, propertyKeys);
-                    createNodes(node.valueRef, commons.common, ['common'], node.self || node.valueRef);
-                    createNodes(node.valueRef, properties.common, ['property'], node.self || node.valueRef);
-                    createNodes(node.valueRef, commons.accessors.concat(properties.accessors), ['property', 'accessors'], node.self || node.valueRef);
-                }
-                const __proto__ = node.valueRef.__proto__ || Object.getPrototypeOf(node.valueRef);
-                if (__proto__ &&
-                    !node.type.includes('dummy-object') &&
-                    !node.type.includes('[[entries]]') &&
-                    !node.type.includes('chunk') &&
-                    options.prototype === true) {
-                    let preview;
-                    if (type.includes('Element')) {
-                        preview = getType(__proto__);
-                    }
-                    else {
-                        preview = buildPreview(__proto__, {
-                            detail: false
-                        });
-                    }
-                    const child = this.createNode({
-                        parent: node,
-                        key: '[[Prototype]]',
-                        value: __proto__,
-                        type: ['[[prototype]]'],
-                        self: (type.includes('Element')) ? node.self : node.valueRef,
-                        preview: preview
-                    });
-                    node.children.push(child);
-                }
-                node.childrenLoaded = true;
-            }
-            node.expanded = true;
-            const childrenSize = this.findChildrenSize(node);
-            node.visibleSize = childrenSize + 1;
-            node.parent?.increaseVisibleSize?.(childrenSize);
-            this.visibleNodes = [];
-            this._buildVisibleNodes(this.root);
-            for (const item of expandQueue) {
-                item.expand?.();
-            }
-            return true;
-        };
-        node.collapse = () => {
-            const visibleSize = node.visibleSize;
-            if (node.valueGetter) {
-                this.removeChildren(node);
-                node.childrenLoaded = false;
-                node.children = [];
-            }
-            for (const child of node.children) {
-                if (child.valueGetter) {
-                    if (child.hasChildren && child.childTypeLoaded) {
-                        this.removeChildren(child);
-                    }
-                    child.children = [];
-                    child.childrenLoaded = false;
-                    child.hasChildren = false;
-                    child.valueRef = '(...)';
-                    child.valueType = 'string';
-                    child.preview = child.valueRef;
-                    child.visibleSize = 1;
-                    child.expanded = false;
-                }
-            }
-            node.expanded = false;
-            node.parent?.decreaseVisibleSize?.(visibleSize - 1);
-            node.visibleSize = 1;
-            this.visibleNodes = [];
-            this._buildVisibleNodes(this.root);
-        };
-        node.destroy = (self = true) => {
-            if (node.hasChildren) {
-                for (const child of node.children) {
-                    child.destroy?.();
-                }
-            }
-            node.visibleSize = 1;
-            if (self == true) {
-                this.nodeMap.delete(node.id);
-                listeners.clear();
-                Object.keys(node).forEach(key => {
-                    delete node[key];
-                });
-            }
-        };
-        this.nodeMap.set(id, node);
-        return node;
     }
     async expandNodeRecursively(node) {
+        if (!this.alive)
+            return false;
         try {
             if (node.valueGetter) {
                 // not expanding nodes with valueGetter to avoid potential infinite loops or side effects
@@ -807,8 +834,8 @@ class NodeManager {
         try {
             await new Promise(async (resolve, reject) => {
                 requestAnimationFrame(() => {
-                    const result = node.expand?.();
-                    if (node.expand && result === false) {
+                    const result = this.expandNode(node);
+                    if (result === false) {
                         return reject();
                     }
                     resolve();
@@ -831,23 +858,6 @@ class NodeManager {
     checkParentExpanded(node) {
         return node.parent ? node.parent.expanded && this.checkParentExpanded(node.parent) : true;
     }
-    findNodeAtIndex(index) {
-        function traverse(node, index) {
-            if (index === 0)
-                return node;
-            index--;
-            if (node.expanded && node.childrenLoaded && node.children) {
-                for (const child of node.children) {
-                    if (index < child.visibleSize) {
-                        return traverse(child, index);
-                    }
-                    index -= child.visibleSize;
-                }
-            }
-            return null;
-        }
-        return traverse(this.root, index);
-    }
     findChildrenSize(node) {
         if (!node.hasChildren || !node.childrenLoaded || !node.expanded)
             return 0;
@@ -858,12 +868,12 @@ class NodeManager {
         return size;
     }
     removeNode(node) {
-        node.destroy?.();
+        this.destroyNode(node);
         this.visibleNodes = [];
         this._buildVisibleNodes(this.root);
     }
     removeChildren(node) {
-        node.destroy?.(false);
+        this.destroyNode(node, false);
         this.visibleNodes = [];
         this._buildVisibleNodes(this.root);
     }
@@ -953,6 +963,8 @@ class ObjectInspector {
     menuEl = document.createElement('div');
     onScroll;
     onResize;
+    onWindowClick;
+    alive = true;
     viewportProvider;
     defaultViewportProvider;
     static version = __VERSION__;
@@ -960,12 +972,12 @@ class ObjectInspector {
     get width() {
         let maxWidth = 0;
         this.nodeManager.visibleNodes.forEach(node => {
-            maxWidth = node.width > maxWidth ? node.width : maxWidth;
+            maxWidth = node.contentWidth > maxWidth ? node.contentWidth : maxWidth;
         });
         return maxWidth;
     }
     get height() {
-        return (this.nodeManager.findChildrenSize(this.nodeManager.root) + 1) * ROW_HEIGHT;
+        return (this.nodeManager.root && this.nodeManager.findChildrenSize(this.nodeManager.root) + 1) * ROW_HEIGHT;
     }
     on;
     off;
@@ -1005,9 +1017,10 @@ class ObjectInspector {
         this.menuEl.className = styles$1.contextmenu;
         container.appendChild(this.inspectorEl);
         this.inspectorEl.appendChild(this.rowsEl);
-        window.addEventListener('click', () => {
+        this.onWindowClick = () => {
             this.menuEl.remove();
-        });
+        };
+        window.addEventListener('click', this.onWindowClick);
         if (this.options.width === 'intrinsic') {
             this.inspectorEl.style.overflowX = 'visible';
             this.inspectorEl.classList.add(styles$1.widthIntrinsic);
@@ -1069,14 +1082,14 @@ class ObjectInspector {
         setTimeout(() => this.render(), 33);
     }
     destroy() {
+        this.alive = false;
+        window.removeEventListener('click', this.onWindowClick);
         this.detachCurrentProvider();
         this.defaultViewportProvider.destroy();
         this.nodeManager.destroy();
         this.rows.clear();
+        this.menuEl.remove();
         this.inspectorEl.remove();
-        Object.keys(this).forEach((key) => {
-            delete this[key];
-        });
     }
     detachCurrentProvider = () => {
         if (!this.viewportProvider) {
@@ -1086,7 +1099,7 @@ class ObjectInspector {
         this.viewportProvider.off("resize", this.onResize);
     };
     attachViewportProvider(provider) {
-        if (this.viewportProvider === provider) {
+        if (this.viewportProvider === provider || !this.alive) {
             return;
         }
         this.detachCurrentProvider();
@@ -1116,8 +1129,8 @@ class ObjectInspector {
         this.menuEl.innerHTML = '';
         const items = [];
         if (node.level !== 0 && // top-level object has no key!!!
-            !node.type.includes('[[prototype]]') && // [[Prototype]] is a virtual object that cannot be accessed via key
-            !node.type.includes('chunk') // large array chunks ( doesn't exist in real array )
+            !node.flags.includes('[[prototype]]') && // [[Prototype]] is a virtual object that cannot be accessed via key
+            !node.flags.includes('chunk') // large array chunks ( doesn't exist in real array )
         ) {
             items.push({
                 text: 'Copy key',
@@ -1140,7 +1153,7 @@ class ObjectInspector {
         items.push({
             text: 'Copy value',
             action: async () => {
-                await navigator.clipboard.writeText(node.valueRef);
+                await navigator.clipboard.writeText(node.value);
             }
         });
         if (!node.valueGetter && node.hasChildren) {
@@ -1272,14 +1285,17 @@ class ObjectInspector {
             lastMaxWidth = width;
         };
         const measureWidth = () => {
-            if (!this.nodeManager.nodeMap.get(node.id))
+            const target = this.nodeManager.nodeMap.get(node.id);
+            if (!target)
                 return;
             row.style.minWidth = '0px';
             row.style.width = 'fit-content';
-            this.nodeManager.nodeMap.get(node.id).width = row.scrollWidth;
+            target.contentWidth = row.scrollWidth;
+            this.nodeManager.nodeMap.set(node.id, target);
             row.style.removeProperty('min-width');
             row.style.removeProperty('width');
         };
+        let self = this;
         function initialize() {
             updateKey(node.key);
             updatePreview(node.preview);
@@ -1288,15 +1304,15 @@ class ObjectInspector {
             key.style.removeProperty('opacity');
             key.style.removeProperty('fontWeight');
             key.style.removeProperty('color');
-            if (node.type.includes('property')) {
+            if (node.flags.includes('property')) {
                 key.style.opacity = '.6';
             }
-            if (node.type.includes('[[prototype]]') ||
-                node.type.includes('[[entries]]')) {
+            if (node.flags.includes('[[prototype]]') ||
+                node.flags.includes('[[entries]]')) {
                 key.style.color = '#868686';
                 key.style.fontWeight = '400';
             }
-            if (node.type.includes('prototype')) {
+            if (node.flags.includes('prototype')) {
                 key.style.fontWeight = '400';
                 key.style.opacity = '.6';
             }
@@ -1306,7 +1322,7 @@ class ObjectInspector {
                 function getValue(e) {
                     e.preventDefault();
                     e.stopPropagation();
-                    node.accessGetter?.();
+                    self.nodeManager.accessNodeGetter(node);
                     preview.removeEventListener('click', getValue);
                     initialize();
                 }
@@ -1340,11 +1356,11 @@ class ObjectInspector {
             if (!node.hasChildren)
                 return;
             if (node.expanded) {
-                node.collapse?.();
+                this.nodeManager.collapseNode(node);
                 expand.classList.remove(styles$1.expanded);
             }
             else {
-                node.expand?.();
+                this.nodeManager.expandNode(node);
                 expand.classList.add(styles$1.expanded);
             }
             this.render();
@@ -1360,6 +1376,8 @@ class ObjectInspector {
         };
     };
     render = (topTolerance = 0, bottomTolerance = 0) => {
+        if (!this.alive)
+            return;
         const rowRange = this.getRowRange(topTolerance, bottomTolerance);
         const scrollLeft = this.inspectorEl.scrollLeft;
         const nodes = this.nodeManager.visibleNodes.slice(rowRange.start, rowRange.end + 1);
@@ -1408,11 +1426,11 @@ class ObjectInspector {
         }
         let maxWidth = 0;
         this.nodeManager.visibleNodes.forEach(node => {
-            maxWidth = node.width > maxWidth ? node.width : maxWidth;
+            maxWidth = node.contentWidth > maxWidth ? node.contentWidth : maxWidth;
         });
         this.rowsEl.style.width = `${maxWidth}px`;
     };
-    requestRender = throttle((...arg) => this.render(...arg), 66);
+    requestRender = throttle((...arg) => this.alive && this.render(...arg), 66);
 }
 
 export { ObjectInspector as default };

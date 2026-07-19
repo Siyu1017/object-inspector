@@ -9,6 +9,8 @@ declare class ObjectInspector {
     private readonly menuEl;
     private onScroll;
     private onResize;
+    private onWindowClick;
+    private alive;
     private viewportProvider;
     private defaultViewportProvider;
     static readonly version: string;

@@ -1,3 +1,5 @@
+import { Node } from "./node";
+
 export interface ViewportState {
     scrollTop: number;
     scrollLeft: number;
@@ -22,44 +24,15 @@ export type ObjectInspectorOptions = {
     height: "viewport" | "intrinsic"
 }
 
-export type Node = {
-    id: number,
-    parent?: Node,
-    level: number,
-    key: any,
-    valueRef: any,
-    valueType: string,
-    valueGetter: (() => any) | null,
-    hasChildren: boolean,
-    childrenLoaded: boolean,
-    children: Node[],
-    expanded: boolean,
-    visibleSize: number,
-    preview: string,
-    width: number,
-    type: string[],
-    on: (event: string, callback: () => void) => void,
-    self: any | null,
-    attachment: any | null,
-    accessGetter?: (() => void) | null,
-    increaseVisibleSize?: (size: number) => void,
-    decreaseVisibleSize?: (size: number) => void,
-    expand?: (options?: NodeExpandOptions) => void | boolean,
-    collapse?: () => void,
-    destroy?: (self?: boolean) => void,
-    childTypeLoaded?: boolean,
-    path?: string
-}
-
-export type NodeData = {
-    parent?: any;
+export type NodeOptions = {
+    parent?: Node;
     key?: string;
     value: any;
     valueGetter?: () => any;
     preview?: string;
-    type?: string | string[];
+    flags?: string[];
     originalType?: string;
-    self?: any;
+    target?: any;
     attachment?: any;
 }
 

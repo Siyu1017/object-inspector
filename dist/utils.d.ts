@@ -26,5 +26,6 @@ export declare class EventEmitter {
     off(eventName: string, handler: Function): void;
     once(eventName: string, handler: Function): void;
     emit(eventName: string, ...args: any[]): void;
+    dispose(): void;
 }
 //# sourceMappingURL=utils.d.ts.map

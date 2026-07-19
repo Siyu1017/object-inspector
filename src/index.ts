@@ -1,9 +1,10 @@
 import { clone, EventEmitter, isElement, throttle } from "./utils";
 import styles from "./index.module.css";
 import { ROW_HEIGHT, ROW_INDENT } from "./constants";
+import type { Node } from "./node";
 import { NodeManager } from "./nodeManager";
 import { DefaultViewportProvider, ViewportProvider } from "./viewportProvider";
-import { Node, ObjectInspectorOptions, Row, ViewportState } from "./types";
+import { ObjectInspectorOptions, Row, ViewportState } from "./types";
 
 class ObjectInspector {
     private readonly nodeManager: NodeManager;
@@ -16,6 +17,9 @@ class ObjectInspector {
 
     private onScroll;
     private onResize;
+    private onWindowClick;
+
+    private alive = true;
 
     private viewportProvider!: ViewportProvider;
     private defaultViewportProvider: ViewportProvider;
@@ -26,13 +30,13 @@ class ObjectInspector {
     get width() {
         let maxWidth = 0;
         this.nodeManager.visibleNodes.forEach(node => {
-            maxWidth = node.width > maxWidth ? node.width : maxWidth;
+            maxWidth = node.contentWidth > maxWidth ? node.contentWidth : maxWidth;
         })
         return maxWidth;
     }
 
     get height() {
-        return (this.nodeManager.findChildrenSize(this.nodeManager.root) + 1) * ROW_HEIGHT;
+        return (this.nodeManager.root && this.nodeManager.findChildrenSize(this.nodeManager.root) + 1) * ROW_HEIGHT;
     }
 
     on: (event: string, listener: () => void) => void;
@@ -81,9 +85,11 @@ class ObjectInspector {
         this.menuEl.className = styles.contextmenu;
         container.appendChild(this.inspectorEl);
         this.inspectorEl.appendChild(this.rowsEl);
-        window.addEventListener('click', () => {
+
+        this.onWindowClick = () => {
             this.menuEl.remove();
-        })
+        }
+        window.addEventListener('click', this.onWindowClick);
 
         if (this.options.width === 'intrinsic') {
             this.inspectorEl.style.overflowX = 'visible';
@@ -156,15 +162,14 @@ class ObjectInspector {
     }
 
     destroy() {
+        this.alive = false;
+        window.removeEventListener('click', this.onWindowClick);
         this.detachCurrentProvider();
         this.defaultViewportProvider.destroy();
         this.nodeManager.destroy();
         this.rows.clear();
+        this.menuEl.remove();
         this.inspectorEl.remove();
-
-        Object.keys(this).forEach((key: string) => {
-            delete (this as any)[key];
-        })
     }
 
     private detachCurrentProvider = () => {
@@ -178,7 +183,7 @@ class ObjectInspector {
 
 
     attachViewportProvider(provider: ViewportProvider) {
-        if (this.viewportProvider === provider) {
+        if (this.viewportProvider === provider || !this.alive) {
             return;
         }
         this.detachCurrentProvider();
@@ -215,8 +220,8 @@ class ObjectInspector {
 
         if (
             node.level !== 0 &&                         // top-level object has no key!!!
-            !node.type.includes('[[prototype]]') &&     // [[Prototype]] is a virtual object that cannot be accessed via key
-            !node.type.includes('chunk')                // large array chunks ( doesn't exist in real array )
+            !node.flags.includes('[[prototype]]') &&    // [[Prototype]] is a virtual object that cannot be accessed via key
+            !node.flags.includes('chunk')               // large array chunks ( doesn't exist in real array )
         ) {
             items.push({
                 text: 'Copy key',
@@ -239,7 +244,7 @@ class ObjectInspector {
         items.push({
             text: 'Copy value',
             action: async () => {
-                await navigator.clipboard.writeText(node.valueRef);
+                await navigator.clipboard.writeText(node.value);
             }
         });
 
@@ -388,15 +393,17 @@ class ObjectInspector {
         }
 
         const measureWidth = () => {
-            if (!this.nodeManager.nodeMap.get(node.id)) return;
-
+            const target = this.nodeManager.nodeMap.get(node.id);
+            if (!target) return;
             row.style.minWidth = '0px';
             row.style.width = 'fit-content';
-            this.nodeManager.nodeMap.get(node.id).width = row.scrollWidth;
+            target.contentWidth = row.scrollWidth;
+            this.nodeManager.nodeMap.set(node.id, target);
             row.style.removeProperty('min-width');
             row.style.removeProperty('width');
         }
 
+        let self = this;
         function initialize() {
             updateKey(node.key);
             updatePreview(node.preview);
@@ -407,17 +414,17 @@ class ObjectInspector {
             key.style.removeProperty('fontWeight');
             key.style.removeProperty('color');
 
-            if (node.type.includes('property')) {
+            if (node.flags.includes('property')) {
                 key.style.opacity = '.6';
             }
             if (
-                node.type.includes('[[prototype]]') ||
-                node.type.includes('[[entries]]')
+                node.flags.includes('[[prototype]]') ||
+                node.flags.includes('[[entries]]')
             ) {
                 key.style.color = '#868686';
                 key.style.fontWeight = '400';
             }
-            if (node.type.includes('prototype')) {
+            if (node.flags.includes('prototype')) {
                 key.style.fontWeight = '400';
                 key.style.opacity = '.6';
             }
@@ -430,7 +437,7 @@ class ObjectInspector {
                     e.preventDefault();
                     e.stopPropagation();
 
-                    node.accessGetter?.();
+                    self.nodeManager.accessNodeGetter(node);
                     preview.removeEventListener('click', getValue);
                     initialize();
                 }
@@ -465,10 +472,10 @@ class ObjectInspector {
             if (!node.hasChildren) return;
 
             if (node.expanded) {
-                node.collapse?.();
+                this.nodeManager.collapseNode(node);
                 expand.classList.remove(styles.expanded);
             } else {
-                node.expand?.();
+                this.nodeManager.expandNode(node);
                 expand.classList.add(styles.expanded);
             }
 
@@ -488,6 +495,8 @@ class ObjectInspector {
     }
 
     private render = (topTolerance = 0, bottomTolerance = 0) => {
+        if (!this.alive) return;
+
         const rowRange = this.getRowRange(topTolerance, bottomTolerance);
         const scrollLeft = this.inspectorEl.scrollLeft;
         const nodes = this.nodeManager.visibleNodes.slice(rowRange.start, rowRange.end + 1);
@@ -539,12 +548,12 @@ class ObjectInspector {
 
         let maxWidth = 0;
         this.nodeManager.visibleNodes.forEach(node => {
-            maxWidth = node.width > maxWidth ? node.width : maxWidth;
+            maxWidth = node.contentWidth > maxWidth ? node.contentWidth : maxWidth;
         })
         this.rowsEl.style.width = `${maxWidth}px`;
     }
 
-    private requestRender = throttle((...arg) => this.render(...arg), 66);
+    private requestRender = throttle((...arg) => this.alive && this.render(...arg), 66);
 }
 
 export default ObjectInspector;

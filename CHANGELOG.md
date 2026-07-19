@@ -7,6 +7,10 @@
 - Corrected width measurement when `options.width` is set to `intrinsic`
 - Invalid constructor option values now automatically fall back to their default values
 
+### Improved
+
+- Improved internal architecture to enhance maintainability and reliability
+
 ## [1.1.2] - 2026-07-05
 
 ### Fixed

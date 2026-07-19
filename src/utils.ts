@@ -181,4 +181,8 @@ export class EventEmitter {
             }
         }
     }
+
+    dispose() {
+        this.listeners.clear();
+    }
 }
