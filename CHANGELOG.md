@@ -10,6 +10,7 @@
 ### Improved
 
 - Improved internal architecture to enhance maintainability and reliability
+- Improved rendering performance
 
 ## [1.1.2] - 2026-07-05
 

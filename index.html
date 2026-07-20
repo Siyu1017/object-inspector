@@ -7,6 +7,8 @@
     <title>Object Inspector</title>
     <meta name="theme-color" content="rgb(24,24,24)">
     <script src="./dist/index.umd.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/vs2015.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
     <style>
         html {
             background: rgb(24, 24, 24);
@@ -34,6 +36,10 @@
             background: #1e1e1e;
         }
 
+        ol {
+            padding-inline-start: 2rem;
+        }
+
         hr {
             display: block;
             height: 1px;
@@ -52,6 +58,7 @@
             height: fit-content;
             display: block;
             margin: 1rem 0;
+            overflow: auto;
         }
     </style>
 </head>
@@ -69,17 +76,20 @@
     <ol style="order: 1;">
         <li>
             <div class="heading">Import Object Inspector</div>
-            <code>// ESM<br>import ObjectInspector from "./dist/index.js";</code>
-            <code>&lt;-- UMD --&gt;<br>&lt;script src="./dist/index.umd.js"&gt;&lt;/script&gt;</code>
+            <pre><code class="language-javascript">// ESM
+import ObjectInspector from "./dist/index.js";</code></pre>
+            <pre><code class="language-xml">&lt;!-- UMD --&gt;
+&lt;script src="./dist/index.umd.js"&gt;&lt;/script&gt;</code></pre>
         </li>
         <li>
             <div class="heading">Create a new Object Inspector instance</div>
-            <code>const viewer = new ObjectInspector(container, obj);</code>
+            <pre><code class="language-javascript">const viewer = new ObjectInspector(container, obj, options?);</code></pre>
         </li>
         <li>
             <div class="heading">Done</div>
         </li>
     </ol>
+    <script>hljs.highlightAll();</script>
     <script>
         const obj = window;
 

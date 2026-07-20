@@ -5,6 +5,8 @@ export declare function safeEscape(html: string): string;
 export declare function functionToCode(fn: Function): string;
 export declare function capitalizeFirstLetter(val: string): string;
 export declare function safeString(str: any): string;
+export declare function isProxy(value: any): boolean;
+export declare function safeGetType(obj: any): string;
 /**
  * Based on implementation from:
  * https://github.com/angus-c/just/blob/master/packages/collection-clone/

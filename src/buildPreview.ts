@@ -1,5 +1,5 @@
 import { symbols } from "./symbols";
-import { functionToCode, getType, isElement, isExpandable, safeString } from "./utils";
+import { functionToCode, getType, isElement, isExpandable, isProxy, safeString } from "./utils";
 import styles from "./buildPreview.module.css";
 import { PREVIEW_DEPTH, PREVIEW_MAX_ARRAY_LENGTH, PREVIEW_MAX_MAP_LENGTH, PREVIEW_MAX_OBJECT_LENGTH, PREVIEW_MAX_SET_LENGTH, PREVIEW_MAX_STRING_LENGTH } from "./constants";
 import { BuildPreviewOptions } from "./types";
@@ -55,7 +55,16 @@ export function buildPreview(value: any, previewOptions?: BuildPreviewOptions): 
         if (type === 'Array') {
             const len = value.length;
             if (showDetail) {
-                preview = value.slice(0, options.maxArrayLength).map((item: any) => traverse(item, depth + 1)).join(', ');
+                const items = [];
+                for (let i = 0; i < len && i < options.maxArrayLength; i++) {
+                    const descriptor = Object.getOwnPropertyDescriptor(value, String(i));
+                    if (!descriptor || descriptor.get) {
+                        items.push('(...)');
+                        continue;
+                    }
+                    items.push(traverse(descriptor.value, depth + 1));
+                }
+                preview = items.join(', ');
                 if (len > options.maxArrayLength)
                     preview += ', ' + symbols.ellipsis;
 
@@ -66,12 +75,19 @@ export function buildPreview(value: any, previewOptions?: BuildPreviewOptions): 
 
         if (type === 'Object') {
             if (showDetail) {
-                const keys = Reflect.ownKeys(value);
+                const allKeys = Reflect.ownKeys(value);
+                const keys = allKeys.filter(key => {
+                    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+                    return descriptor && !descriptor.get;
+                });
                 preview = keys.slice(0, options.maxObjectLength).map((k: string | symbol) => {
-                    const t = value[k];
+                    const t = Object.getOwnPropertyDescriptor(value, k)?.value;
                     return `${wrapKey(k)}: ${wrapText(traverse(t, depth + 1), getType(t).toLowerCase())}`;
                 }).join(', ');
 
+                if (keys.length !== allKeys.length && keys.length == 0) {
+                    preview += symbols.ellipsis;
+                }
                 if (keys.length > options.maxObjectLength)
                     preview += ', ' + symbols.ellipsis;
 
@@ -91,20 +107,23 @@ export function buildPreview(value: any, previewOptions?: BuildPreviewOptions): 
         if (type.includes('Function')) {
             if (showDetail) {
                 const fnCode = functionToCode(value);
-                const cName = value.constructor?.toString().toLowerCase() || '';
-                const isArrow = !value.prototype && !/^(?:async\s+)?function/.test(fnCode);
+                const cName = Function.prototype.toString.call(Object.getPrototypeOf(value)?.constructor).toLowerCase() || '';
+                const prototype = Object.getOwnPropertyDescriptor(value, 'prototype')?.value;
+                const className = Object.getOwnPropertyDescriptor(prototype ?? {}, 'constructor')?.value?.name;
+                const isArrow = !prototype && !/^(?:async\s+)?function/.test(fnCode) && fnCode.includes('=>');
                 const isAsync = cName.includes('async');
                 const isGenerator = cName.includes('generator');
                 const isClass = (fnCode || '').trim().startsWith('class');
                 if (isClass) {
-                    return wrapText(`${wrapText('class', 'keyword')} ${safeString(value.prototype?.constructor?.name)}`, 'function');
+                    return wrapText(`${wrapText('class', 'keyword')} ${safeString(className)}`, 'function');
                 } else if (isArrow) {
                     return wrapText(`${isAsync ? wrapText('async', 'keyword') : ''} () => {}`, 'function');
                 } else {
                     preview += isAsync ? wrapText('async', 'keyword') : '';
                     preview += wrapText(`${isAsync ? ' ' : ''}${symbols.function}`, 'keyword');
                     preview += isGenerator ? wrapText('*', 'keyword') : '';
-                    preview += ` ${value.name && fnCode.match(/function([\s\S]*?)\(.*?\)/)?.[1]?.replace('*', '').trim() ? safeString(value.name) : ''}()`;
+                    const name = Object.getOwnPropertyDescriptor(value, 'name')?.value;
+                    preview += ` ${name && fnCode.match(/function([\s\S]*?)\(.*?\)/)?.[1]?.replace('*', '').trim() ? safeString(name) : ''}()`;
                     return wrapText(preview, 'function');
                 }
             } else {
@@ -113,7 +132,7 @@ export function buildPreview(value: any, previewOptions?: BuildPreviewOptions): 
         }
 
         if (isElement(value)) {
-            const id = value.id;
+            const id = Element.prototype.getAttribute.call(value, "id");
             const classArr = [...value.classList];
             const className = (classArr.length > 0 ? '.' : '') + classArr.join('.');
             return wrapText(`${safeWrapText(value.tagName.toLowerCase(), 'element-tagName')}${safeWrapText(id ? '#' + id : '', 'element-id')}${safeWrapText(className, 'element-className')}`, 'generic');
@@ -153,7 +172,7 @@ export function buildPreview(value: any, previewOptions?: BuildPreviewOptions): 
         }
 
         if (type == 'Error') {
-            return wrapText('Error: ' + safeString(value.message), 'error');
+            return wrapText('Error: ' + safeString(Object.getOwnPropertyDescriptor(value, "message")?.value ?? ""), 'error');
         }
 
         if ([
@@ -165,6 +184,9 @@ export function buildPreview(value: any, previewOptions?: BuildPreviewOptions): 
         if (!isExpandable(value)) {
             return wrapText(safeString(value), type.toLowerCase());
         } else {
+            if (isProxy(value)) {
+                return safeWrapText(`Proxy(${type})`, type.toLowerCase());
+            }
             return safeWrapText(type, type.toLowerCase());
         }
     }
@@ -172,7 +194,10 @@ export function buildPreview(value: any, previewOptions?: BuildPreviewOptions): 
     try {
         return traverse(options.self || value, 0);
     } catch (e) {
-        const type = getType(options.self || value)
+        const type = getType(options.self || value);
+        if (isProxy(value)) {
+            return safeWrapText(`Proxy(${type})`, type.toLowerCase());
+        }
         return safeWrapText(type, type.toLowerCase());
     }
 }

@@ -16,6 +16,8 @@ export declare class DefaultViewportProvider extends ViewportProvider {
     private resizeObserver?;
     private onScroll;
     private onResize;
+    private viewportWidth;
+    private viewportHeight;
     constructor(inspectorEl: HTMLDivElement);
     destroy(): void;
     getScrollTop(): number;

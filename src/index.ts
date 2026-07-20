@@ -1,10 +1,11 @@
-import { clone, EventEmitter, isElement, throttle } from "./utils";
+import { clone, EventEmitter, isElement } from "./utils";
 import styles from "./index.module.css";
 import { ROW_HEIGHT, ROW_INDENT } from "./constants";
 import type { Node } from "./node";
 import { NodeManager } from "./nodeManager";
 import { DefaultViewportProvider, ViewportProvider } from "./viewportProvider";
 import { ObjectInspectorOptions, Row, ViewportState } from "./types";
+import { RowData } from "./rowData";
 
 class ObjectInspector {
     private readonly nodeManager: NodeManager;
@@ -12,12 +13,17 @@ class ObjectInspector {
     private readonly options: ObjectInspectorOptions;
 
     private readonly inspectorEl = document.createElement('div');
+    private readonly measureEl = document.createElement('div');
     private readonly rowsEl = document.createElement('div');
     private readonly menuEl = document.createElement('div');
 
     private onScroll;
     private onResize;
     private onWindowClick;
+    private scrollSpeed = 0;
+    private lastScrollTop = 0;
+    private lastScrollTime = 0;
+    private measureRow: Row;
 
     private alive = true;
 
@@ -77,14 +83,19 @@ class ObjectInspector {
                 height: this.height
             });
             this.render();
-            this.rowsEl.style.height = `${(this.nodeManager.findChildrenSize(this.nodeManager.root) + 1) * ROW_HEIGHT}px`;
+            this.rowsEl.style.height = `${(this.nodeManager.root.visibleSize) * ROW_HEIGHT}px`;
         });
 
         this.inspectorEl.className = styles.inspector;
+        this.measureEl.className = styles.measure;
         this.rowsEl.className = styles.rows;
         this.menuEl.className = styles.contextmenu;
         container.appendChild(this.inspectorEl);
+        this.inspectorEl.appendChild(this.measureEl);
         this.inspectorEl.appendChild(this.rowsEl);
+
+        this.measureRow = this.createRow(true);
+        this.measureEl.appendChild(this.measureRow.row);
 
         this.onWindowClick = () => {
             this.menuEl.remove();
@@ -110,48 +121,30 @@ class ObjectInspector {
             }
         }
 
-        let lastTime = 0;
-        let lastScroll = 0;
-        let timeout: number | null = null;
+        let renderPending = false;
         this.onScroll = (event: ViewportState) => {
             const scrollTop = event.scrollTop;
-            if (scrollTop == lastScroll) return;
+            if (scrollTop == this.lastScrollTop) return;
 
-            const viewportSize = Math.ceil(event.clientHeight / ROW_HEIGHT);
             const now = Date.now();
-            const delta = now - lastTime;
-            const distance = Math.abs(scrollTop - lastScroll);
+            const delta = now - this.lastScrollTime;
+            const distance = Math.abs(scrollTop - this.lastScrollTop);
             const speed = distance / delta * 1000;
 
-            let tolerant = speed / ROW_HEIGHT * 2;
-            let topTolerance = tolerant;
-            let bottomTolerance = tolerant;
+            this.lastScrollTop = scrollTop;
+            this.lastScrollTime = now;
+            this.scrollSpeed = speed;
 
-            if (tolerant > viewportSize / 2) {
-                tolerant = viewportSize / 2;
-            }
+            if (renderPending) return;
+            renderPending = true;
 
-            if (scrollTop > lastScroll) {
-                bottomTolerance = tolerant;
-                topTolerance = ~~(tolerant * 0.3);
-            } else {
-                topTolerance = tolerant;
-                bottomTolerance = ~~(tolerant * 0.3);
-            }
-
-            lastScroll = scrollTop;
-            lastTime = now;
-
-            this.requestRender(topTolerance, bottomTolerance);
-
-            if (timeout) {
-                clearTimeout(timeout);
-            }
-            timeout = setTimeout(() => {
-                this.render(topTolerance, bottomTolerance);
-                timeout = null;
-            }, 33)
+            requestAnimationFrame(() => {
+                renderPending = false;
+                this.render();
+            });
         }
+
+        this.measureDirtyRows();
 
         this.defaultViewportProvider = new DefaultViewportProvider(this.inspectorEl);
         this.attachViewportProvider(this.defaultViewportProvider);
@@ -284,6 +277,33 @@ class ObjectInspector {
         }
     }
 
+    private measureDirtyRows() {
+        if (!this.alive) return;
+
+        let scrollSpeed = this.scrollSpeed;
+        let maxWidth = this.nodeManager.maxWidth;
+
+        const count = Math.max(1, ~~(Math.pow(1 - scrollSpeed / 5000, 2) * 500));
+        const dirtyNodes = this.nodeManager.dirtyNodes.splice(0, count);
+        for (const nodeId of dirtyNodes) {
+            const node = this.nodeManager.nodeMap.get(nodeId);
+            if (!node) continue;
+            this.measureRow.update(node);
+            this.nodeManager.updateContentWidth(node, this.measureRow.measureWidth());
+        }
+
+        if (this.scrollSpeed == scrollSpeed) {
+            this.scrollSpeed = 0;
+        }
+
+        requestAnimationFrame(() => {
+            if (this.nodeManager.maxWidth != maxWidth) {
+                this.render();
+            }
+            this.measureDirtyRows();
+        });
+    }
+
     private getRowRange = (topTolerance = 0, bottomTolerance = 0) => {
         const scrollTop = this.viewportProvider.getScrollTop();
         const height = this.viewportProvider.getClientHeight();
@@ -334,7 +354,10 @@ class ObjectInspector {
         }
     }
 
-    private createRow = (node: Node, index: number): Row => {
+    private createRow = (measure = false): Row => {
+        const self = this;
+        const rowData = new RowData();
+
         const row = document.createElement('div');
         const indent = document.createElement('div');
         const content = document.createElement('div');
@@ -353,7 +376,10 @@ class ObjectInspector {
         key.className = styles['row-key'];
         colon.className = styles['row-colon'];
         preview.className = styles['row-preview'];
-        row.style.top = `${index * ROW_HEIGHT}px`;
+
+        if (measure) {
+            row.classList.add(styles.measure);
+        }
 
         row.appendChild(indent);
         row.appendChild(content);
@@ -362,143 +388,158 @@ class ObjectInspector {
         content.appendChild(colon);
         content.appendChild(preview);
 
+        function updateNode(node: Node) {
+            rowData.node = node;
+
+            updateKey(rowData.node.key);
+            updatePreview(rowData.node.preview);
+            updateIndent(rowData.node.level);
+        }
+
+        let lastKey = '';
+        function updateKey(val: string) {
+            if (lastKey == val) return;
+            lastKey = val;
+            key.textContent = val;
+        }
+
+        let lastPreview = '';
+        function updatePreview(val: string) {
+            if (lastPreview == val) return;
+            lastPreview = val;
+            preview.innerHTML = val;
+        }
+
         function updateIndent(level: number) {
             indent.style.minWidth = `${level * ROW_INDENT}px`;
         }
 
-        function updateKey(val: string) {
-            key.textContent = val;
-        }
-
-        function updatePreview(val: string) {
-            preview.innerHTML = val;
-        }
-
-        function updatePosition(val: number) {
-            if (index === val) return;
-            index = val;
-            row.style.top = `${index * ROW_HEIGHT}px`;
+        function updatePosition(index: number) {
+            rowData.index = index;
+            row.style.top = `${rowData.index * ROW_HEIGHT}px`;
         }
 
         let lastMaxWidth = 0;
-        const updateMaxWidth = (width?: number) => {
+        function updateMaxWidth(width?: number) {
             // set the max-width to the viewport width when options.width is set to "viewport" mode
-            if (this.options.width === 'intrinsic') return;
+            if (self.options.width === 'intrinsic') return;
             if (width === lastMaxWidth) return;
             if (!width) {
-                width = this.viewportProvider.getClientWidth();
+                width = self.viewportProvider.getClientWidth();
             }
             row.style.maxWidth = `${width}px`;
             lastMaxWidth = width;
         }
 
-        const measureWidth = () => {
-            const target = this.nodeManager.nodeMap.get(node.id);
-            if (!target) return;
-            row.style.minWidth = '0px';
-            row.style.width = 'fit-content';
-            target.contentWidth = row.scrollWidth;
-            this.nodeManager.nodeMap.set(node.id, target);
-            row.style.removeProperty('min-width');
-            row.style.removeProperty('width');
+        function measureWidth() {
+            return row.scrollWidth;
         }
 
-        let self = this;
-        function initialize() {
-            updateKey(node.key);
-            updatePreview(node.preview);
-            updateIndent(node.level);
-            updateMaxWidth();
+        function update(node: Node, index?: number) {
+            const flags = node.flags;
+
+            updateNode(node);
+            if (!measure) {
+                updatePosition(index as number);
+                updateMaxWidth();
+            }
 
             key.style.removeProperty('opacity');
-            key.style.removeProperty('fontWeight');
+            key.style.removeProperty('font-weight');
             key.style.removeProperty('color');
 
-            if (node.flags.includes('property')) {
-                key.style.opacity = '.6';
-            }
-            if (
-                node.flags.includes('[[prototype]]') ||
-                node.flags.includes('[[entries]]')
-            ) {
-                key.style.color = '#868686';
-                key.style.fontWeight = '400';
-            }
-            if (node.flags.includes('prototype')) {
-                key.style.fontWeight = '400';
-                key.style.opacity = '.6';
+            key.classList.toggle(styles.property, flags.includes('property'));
+            key.classList.toggle(styles.virtualKey, flags.includes('[[prototype]]') || flags.includes('[[entries]]'));
+            key.classList.toggle(styles.prototype, flags.includes('prototype'));
+            row.classList.toggle(styles.getter, rowData.node.valueGetter && rowData.node.preview === '(...)' ? true : false);
+
+            const colonContent = rowData.node.key && rowData.node.preview ? ': ' : '';
+            if (colon.textContent != colonContent) {
+                colon.textContent = colonContent;
             }
 
-            if (node.valueGetter && node.preview === '(...)') {
-                row.classList.add(styles.getter);
-                preview.addEventListener('click', getValue);
-
-                function getValue(e: MouseEvent) {
-                    e.preventDefault();
-                    e.stopPropagation();
-
-                    self.nodeManager.accessNodeGetter(node);
-                    preview.removeEventListener('click', getValue);
-                    initialize();
-                }
-            } else {
-                row.classList.remove(styles.getter);
-            }
-
-            if (node.key && node.preview) {
-                colon.textContent = ': ';
-            } else {
-                colon.textContent = '';
-            }
-
-            if (node.hasChildren) {
+            if (rowData.node.hasChildren) {
                 expand.classList.add(styles.visible);
             } else {
                 expand.classList.remove(styles.visible);
             }
 
-            if (node.expanded) {
+            if (rowData.node.expanded) {
                 expand.classList.add(styles.expanded);
             } else {
                 expand.classList.remove(styles.expanded);
             }
         }
 
-        initialize();
+        function onClick() {
+            if (!rowData.node.hasChildren) return;
 
-        row.addEventListener('click', () => {
-            if (!node) return;
-
-            if (!node.hasChildren) return;
-
-            if (node.expanded) {
-                this.nodeManager.collapseNode(node);
+            if (rowData.node.expanded) {
+                self.nodeManager.collapseNode(rowData.node);
                 expand.classList.remove(styles.expanded);
             } else {
-                this.nodeManager.expandNode(node);
+                self.nodeManager.expandNode(rowData.node);
                 expand.classList.add(styles.expanded);
             }
 
-            this.render();
-        });
+            self.render();
+        }
 
-        row.addEventListener('contextmenu', (e: MouseEvent) => {
+        function onContextMenu(e: MouseEvent) {
             e.preventDefault();
             e.stopPropagation();
-            this.buildContextMenu(node, e.clientX, e.clientY);
+            self.buildContextMenu(rowData.node, e.clientX, e.clientY);
             return false;
-        })
+        }
+
+        function onPreviewClick(e: MouseEvent) {
+            if (rowData.node.valueGetter && rowData.node.preview === '(...)') {
+                e.preventDefault();
+                e.stopPropagation();
+
+                self.nodeManager.accessNodeGetter(rowData.node);
+                update(rowData.node, rowData.index);
+            }
+        }
+
+        function destroy() {
+            row.removeEventListener('click', onClick);
+            row.removeEventListener('contextmenu', onContextMenu);
+            preview.removeEventListener('click', onPreviewClick);
+            row.remove();
+        }
+
+        row.addEventListener('click', onClick);
+        row.addEventListener('contextmenu', onContextMenu);
+        preview.addEventListener('click', onPreviewClick);
 
         return {
-            row, index, updatePosition, measureWidth, updateMaxWidth
+            row, updatePosition, measureWidth, updateMaxWidth, update, destroy
         };
     }
 
-    private render = (topTolerance = 0, bottomTolerance = 0) => {
+    private render = () => {
         if (!this.alive) return;
 
+        const scrollTop = this.viewportProvider.getScrollTop();
+        const viewportSize = this.viewportProvider.getClientHeight();
+        let tolerant = this.scrollSpeed / ROW_HEIGHT;
+        let topTolerance = tolerant;
+        let bottomTolerance = tolerant;
+
+        if (tolerant > viewportSize) {
+            tolerant = viewportSize;
+        }
+
+        if (scrollTop > this.lastScrollTop) {
+            bottomTolerance = .9 * tolerant;
+            topTolerance = -.4 * tolerant;
+        } else {
+            topTolerance = .9 * tolerant;
+            bottomTolerance = -.4 * tolerant;
+        }
+
         const rowRange = this.getRowRange(topTolerance, bottomTolerance);
-        const scrollLeft = this.inspectorEl.scrollLeft;
         const nodes = this.nodeManager.visibleNodes.slice(rowRange.start, rowRange.end + 1);
 
         const { visibleNodes } = this.nodeManager;
@@ -521,7 +562,7 @@ class ObjectInspector {
             const node = nodes[i];
             let row;
             if (!this.rows.has(node.id)) {
-                row = this.createRow(node, rowRange.start + i);
+                row = this.createRow();
                 if (last) {
                     this.rowsEl.insertBefore(row.row, last);
                 } else {
@@ -530,30 +571,21 @@ class ObjectInspector {
                 this.rows.set(node.id, row);
             } else {
                 row = this.rows.get(node.id);
-                row?.updatePosition(rowRange.start + i);
             }
 
-            row?.measureWidth();
-            if (this.options.width === 'viewport') {
-                row?.updateMaxWidth();
-            }
+            row?.update(node, rowRange.start + i);
             last = row?.row;
         }
 
-        if (scrollLeft > this.inspectorEl.scrollWidth) {
-            this.inspectorEl.scrollLeft = this.inspectorEl.scrollWidth;
-        } else {
-            this.inspectorEl.scrollLeft = scrollLeft;
+        for (let i = nodes.length - 1; i >= 0; i--) {
+            const row = this.rows.get(nodes[i].id);
+            if (this.options.width === 'viewport') {
+                row?.updateMaxWidth();
+            }
         }
 
-        let maxWidth = 0;
-        this.nodeManager.visibleNodes.forEach(node => {
-            maxWidth = node.contentWidth > maxWidth ? node.contentWidth : maxWidth;
-        })
-        this.rowsEl.style.width = `${maxWidth}px`;
+        this.rowsEl.style.width = `${this.nodeManager.maxWidth}px`;
     }
-
-    private requestRender = throttle((...arg) => this.alive && this.render(...arg), 66);
 }
 
 export default ObjectInspector;

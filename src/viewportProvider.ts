@@ -44,7 +44,14 @@ export class DefaultViewportProvider extends ViewportProvider {
     private readonly inspectorEl: HTMLDivElement;
     private resizeObserver?: ResizeObserver;
     private onScroll = () => this.notifyScroll();
-    private onResize = () => this.notifyResize();
+    private onResize = (entries: ResizeObserverEntry[]) => {
+        this.viewportWidth = entries[0].contentRect.width;
+        this.viewportHeight = entries[0].contentRect.height;
+
+        this.notifyResize();
+    }
+    private viewportWidth: number;
+    private viewportHeight: number;
 
     constructor(inspectorEl: HTMLDivElement) {
         super();
@@ -53,6 +60,9 @@ export class DefaultViewportProvider extends ViewportProvider {
         this.inspectorEl.addEventListener('scroll', this.onScroll);
         this.resizeObserver = new ResizeObserver(this.onResize);
         this.resizeObserver.observe(this.inspectorEl);
+
+        this.viewportWidth = this.inspectorEl.clientWidth;
+        this.viewportHeight = this.inspectorEl.clientHeight;
     }
 
     destroy() {
@@ -67,9 +77,9 @@ export class DefaultViewportProvider extends ViewportProvider {
         return this.inspectorEl.scrollLeft
     }
     getClientWidth(): number {
-        return this.inspectorEl.clientWidth;
+        return this.viewportWidth;
     }
     getClientHeight(): number {
-        return this.inspectorEl.clientHeight;
+        return this.viewportHeight;
     }
 }

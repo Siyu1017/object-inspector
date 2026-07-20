@@ -49,6 +49,23 @@ export function safeString(str: any): string {
     return safeEscape(str);
 }
 
+export function isProxy(value: any) {
+    try {
+        Reflect.getPrototypeOf(value);
+        return false;
+    } catch {
+        return true;
+    }
+}
+
+export function safeGetType(obj: any) {
+    try {
+        return getType(obj);
+    } catch {
+        return 'Proxy';
+    }
+}
+
 /**
  * Based on implementation from:
  * https://github.com/angus-c/just/blob/master/packages/collection-clone/
@@ -57,43 +74,56 @@ export function safeString(str: any): string {
  * License: MIT
  */
 export function clone(obj: any) {
-    const seen = new WeakSet();
+    const seen = new WeakMap<object, any>();
 
     function _clone(obj: any): any {
-        let result = obj;
-        const type = getType(obj);
-        if (type == 'Set') {
-            return new Set([...obj].map(value => _clone(value)));
+        const type = safeGetType(obj);
+
+        // primitive
+        if (obj === null || typeof obj !== 'object') {
+            return obj;
         }
-        if (type == 'Map') {
-            return new Map([...obj].map(kv => [_clone(kv[0]), _clone(kv[1])]));
+        // circular reference
+        if (seen.has(obj)) {
+            return seen.get(obj);
         }
-        if (type == 'Date') {
+        if (type === 'Date') {
             return new Date(obj.getTime());
         }
-        if (type == 'RegExp') {
-            return RegExp(obj.source, getRegExpFlags(obj));
+        if (type === 'RegExp') {
+            return new RegExp(obj.source, getRegExpFlags(obj));
         }
-        if (type == 'Array' || type == 'Object') {
-            // circular references detection
-            if (seen.has(obj)) return obj;
-            seen.add(obj);
-
-            result = Array.isArray(obj) ? [] : {};
-            if (type === 'Array') {
-                for (const key in obj) {
-                    // include prototype properties
-                    result[key] = _clone(obj[key]);
-                }
-            } else {
-                for (const key of Reflect.ownKeys(obj)) {
-                    result[key] = _clone(obj[key]);
-                }
+        if (type === 'Set') {
+            const result = new Set();
+            seen.set(obj, result);
+            for (const value of obj) {
+                result.add(_clone(value));
             }
+            return result;
+        }
+        if (type === 'Map') {
+            const result = new Map();
+            seen.set(obj, result);
+            for (const [key, value] of obj) {
+                result.set(_clone(key), _clone(value));
+            }
+            return result;
+        }
+        if (type === 'Array' || type === 'Object') {
+            const result = type === 'Array' ? [] : Object.create(Object.getPrototypeOf(obj));
+            seen.set(obj, result);
+            for (const key of Reflect.ownKeys(obj)) {
+                const descriptor = Object.getOwnPropertyDescriptor(obj, key)!;
+                if (!descriptor) continue;
+                if ('value' in descriptor) {
+                    descriptor.value = _clone(descriptor.value);
+                }
+                Object.defineProperty(result, key, descriptor);
+            }
+            return result;
         }
 
-        // primitives and non-supported objects (e.g. functions) land here
-        return result;
+        return obj;
     }
 
     return _clone(obj);

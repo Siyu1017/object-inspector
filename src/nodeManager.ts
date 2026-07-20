@@ -7,13 +7,16 @@ import { extractKeys, getType, isElement, isExpandable } from "./utils";
 export class NodeManager {
     nextId: number;
     nodeMap: Map<number, Node>;
+    dirtyNodes: number[];
     root: any;
     visibleNodes: Node[];
     alive = true;
+    maxWidth = 0;
 
     constructor(rootValue: any) {
         this.nextId = 0;
         this.nodeMap = new Map();
+        this.dirtyNodes = [];
 
         this.root = this.createNode({
             value: rootValue
@@ -25,6 +28,29 @@ export class NodeManager {
     allocateId() {
         return this.nextId++;
     }
+    updateContentWidth(node: Node, width: number) {
+        node.contentWidth = width;
+        node.widthDirty = false;
+
+        if (width >= this.maxWidth) {
+            this.maxWidth = width;
+            
+        }
+    }
+    markWidthDirty(node: Node) {
+        if (node.widthDirty) return;
+        node.widthDirty = true;
+        this.dirtyNodes.push(node.id);
+    }
+    recalculateMaxWidth() {
+        let maxWidth = 0;
+        for (const node of this.visibleNodes) {
+            if (node.contentWidth > maxWidth) {
+                maxWidth = node.contentWidth;
+            }
+        }
+        this.maxWidth = maxWidth;
+    }
     createNode({
         parent,
         key,
@@ -35,23 +61,14 @@ export class NodeManager {
         target,
         attachment = null
     }: NodeOptions): Node {
-        const valueType = getType(value);
-        try {
-            if (typeof preview !== 'string') {
-                preview = buildPreview(value, {
-                    self: valueType.includes('Element') ? self : null
-                })
-            }
-        } catch (e) {
-            preview = `[Exception: ${e}]`;
-        }
-
         const node = new Node(this.allocateId(), { parent, key, value, valueGetter, preview, flags, target, attachment });
 
         node.contentWidth = 0;
         node.path = this.getNodePath(node);
 
         this.nodeMap.set(node.id, node);
+        this.markWidthDirty(node);
+
         return node;
     }
     accessNodeGetter(node: Node) {
@@ -78,6 +95,8 @@ export class NodeManager {
             node.flags.push('styleless');
             node.preview = node.value;
         }
+
+        this.markWidthDirty(node);
     }
     expandNode(node: Node, options: NodeExpandOptions = {
         prototype: true,
@@ -170,6 +189,9 @@ export class NodeManager {
         for (const item of expandQueue) {
             this.expandNode(item);
         }
+
+        this.recalculateMaxWidth();
+
         return true;
     }
     collapseNode(node: Node) {
@@ -198,6 +220,7 @@ export class NodeManager {
         this.updateVisibleSize(node);
         this.visibleNodes = [];
         this._buildVisibleNodes(this.root);
+        this.recalculateMaxWidth();
     }
     destroyNode(node: Node, self = true) {
         for (const child of node.children) {
@@ -208,6 +231,9 @@ export class NodeManager {
 
         if (self) {
             this.nodeMap.delete(node.id);
+            if (node.contentWidth === this.maxWidth) {
+                this.recalculateMaxWidth();
+            }
             if (node.parent) {
                 const index = node.parent.children.indexOf(node);
                 if (index !== -1) {

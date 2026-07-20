@@ -4,6 +4,7 @@ export declare class Node extends EventEmitter {
     private _visibleSize;
     get visibleSize(): number;
     setVisibleSize(size: number): void;
+    widthDirty: boolean;
     id: number;
     parent?: Node;
     level: number;

@@ -7,10 +7,11 @@ export interface ViewportState {
 }
 export type Row = {
     row: HTMLDivElement;
-    index: number;
     updatePosition: (index: number) => void;
     updateMaxWidth: (width?: number) => void;
-    measureWidth: () => void;
+    measureWidth: () => number;
+    update: (node: Node, index?: number) => void;
+    destroy: () => void;
 };
 /**
  * viewport: container-based size
@@ -46,4 +47,15 @@ export type BuildPreviewOptions = {
     type?: string;
     self?: any;
 };
+export interface PropertySnapshot {
+    key: string | symbol;
+    value?: any;
+    type: string;
+    getter?: boolean;
+    enumerable: boolean;
+}
+export interface ObjectSnapshot {
+    type: string;
+    properties: PropertySnapshot[];
+}
 //# sourceMappingURL=types.d.ts.map

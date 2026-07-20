@@ -45,6 +45,23 @@ function safeString(str) {
     }
     return safeEscape(str);
 }
+function isProxy(value) {
+    try {
+        Reflect.getPrototypeOf(value);
+        return false;
+    }
+    catch {
+        return true;
+    }
+}
+function safeGetType(obj) {
+    try {
+        return getType(obj);
+    }
+    catch {
+        return 'Proxy';
+    }
+}
 /**
  * Based on implementation from:
  * https://github.com/angus-c/just/blob/master/packages/collection-clone/
@@ -53,42 +70,54 @@ function safeString(str) {
  * License: MIT
  */
 function clone(obj) {
-    const seen = new WeakSet();
+    const seen = new WeakMap();
     function _clone(obj) {
-        let result = obj;
-        const type = getType(obj);
-        if (type == 'Set') {
-            return new Set([...obj].map(value => _clone(value)));
+        const type = safeGetType(obj);
+        // primitive
+        if (obj === null || typeof obj !== 'object') {
+            return obj;
         }
-        if (type == 'Map') {
-            return new Map([...obj].map(kv => [_clone(kv[0]), _clone(kv[1])]));
+        // circular reference
+        if (seen.has(obj)) {
+            return seen.get(obj);
         }
-        if (type == 'Date') {
+        if (type === 'Date') {
             return new Date(obj.getTime());
         }
-        if (type == 'RegExp') {
-            return RegExp(obj.source, getRegExpFlags(obj));
+        if (type === 'RegExp') {
+            return new RegExp(obj.source, getRegExpFlags(obj));
         }
-        if (type == 'Array' || type == 'Object') {
-            // circular references detection
-            if (seen.has(obj))
-                return obj;
-            seen.add(obj);
-            result = Array.isArray(obj) ? [] : {};
-            if (type === 'Array') {
-                for (const key in obj) {
-                    // include prototype properties
-                    result[key] = _clone(obj[key]);
-                }
+        if (type === 'Set') {
+            const result = new Set();
+            seen.set(obj, result);
+            for (const value of obj) {
+                result.add(_clone(value));
             }
-            else {
-                for (const key of Reflect.ownKeys(obj)) {
-                    result[key] = _clone(obj[key]);
-                }
-            }
+            return result;
         }
-        // primitives and non-supported objects (e.g. functions) land here
-        return result;
+        if (type === 'Map') {
+            const result = new Map();
+            seen.set(obj, result);
+            for (const [key, value] of obj) {
+                result.set(_clone(key), _clone(value));
+            }
+            return result;
+        }
+        if (type === 'Array' || type === 'Object') {
+            const result = type === 'Array' ? [] : Object.create(Object.getPrototypeOf(obj));
+            seen.set(obj, result);
+            for (const key of Reflect.ownKeys(obj)) {
+                const descriptor = Object.getOwnPropertyDescriptor(obj, key);
+                if (!descriptor)
+                    continue;
+                if ('value' in descriptor) {
+                    descriptor.value = _clone(descriptor.value);
+                }
+                Object.defineProperty(result, key, descriptor);
+            }
+            return result;
+        }
+        return obj;
     }
     return _clone(obj);
 }
@@ -100,16 +129,6 @@ function getRegExpFlags(regExp) {
     regExp.sticky && flags.push('y');
     regExp.unicode && flags.push('u');
     return flags.join('');
-}
-function throttle(fn, delay) {
-    let previousTime = 0;
-    return function (...args) {
-        const nowTime = Date.now();
-        if (nowTime - previousTime >= delay) {
-            previousTime = nowTime;
-            return fn.apply(this, args);
-        }
-    };
 }
 function extractKeys(self, keys) {
     const result = [];
@@ -196,8 +215,8 @@ function styleInject(css, ref) {
   }
 }
 
-var css_248z$1 = ".index-module_inspector__q3168{--bg:#1e1e1e;--color:#e3e3e3;--hover-bg:#33373f;--key-color:#8eacf2;--expand-icon:url(\"data:image/svg+xml;charset=utf-8,%3Csvg width='14' height='14' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M10.5 6.65 4.9 2.8v7.7' fill='%23000'/%3E%3C/svg%3E\");background:var(--bg);color:var(--color);cursor:default;display:block;height:inherit;overflow:auto;width:inherit}.index-module_inspector__q3168 ::selection{background:#b8c6ff;color:#000}.index-module_inspector__q3168,.index-module_inspector__q3168 *{box-sizing:border-box;font-family:monospace;font-size:12px}.index-module_rows__IJe-X{height:auto;position:relative;width:inherit}.index-module_row__wpjpD{align-items:center;display:flex;position:absolute;width:100%}.index-module_row__wpjpD.index-module_getter__L0ERN .index-module_row-preview__tqyCP:hover{text-decoration:underline}.index-module_row-indent__xyNRx{background-image:linear-gradient(90deg,transparent 9px,#727272 0,#727272 10px,transparent 0);background-size:16px;display:block;height:inherit}.index-module_row-content__S5er1{align-items:center;border-radius:.25rem;display:flex;padding:0 .25rem 0 .125rem;width:inherit}.index-module_row-content__S5er1:hover{background:var(--hover-bg)}.index-module_row-expand__vsdGW{height:14px;mask-size:auto;min-height:14px;min-width:14px;transition:transform .1s ease-in-out;width:14px}.index-module_row-expand__vsdGW.index-module_visible__D7mEE{background-color:currentColor;mask-image:var(--expand-icon)}.index-module_row-expand__vsdGW.index-module_visible__D7mEE.index-module_expanded__woQ-O{transform:rotate(90deg)}.index-module_row-key__k15GN{color:var(--key-color);font-weight:bolder;white-space:nowrap}.index-module_row-colon__4OAG3{white-space:pre}.index-module_row-preview__tqyCP{white-space:nowrap}.index-module_contextmenu__z28D2{background:#181818;border:1px solid #252525;border-radius:.75rem;box-shadow:0 2px 16px 4px rgba(0,0,0,.1);flex-direction:column;gap:.125rem;padding:.5rem;position:fixed;z-index:999}.index-module_contextmenu__z28D2 *{color:#fff;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Oxygen-Sans,Ubuntu,Cantarell,Helvetica Neue,sans-serif;font-size:.75rem}.index-module_contextmenu-item__sqyM1{border-radius:.25rem;cursor:pointer;padding:.375rem .75rem;white-space:nowrap}.index-module_contextmenu-item__sqyM1:hover{background:#242424}.index-module_widthIntrinsic__AMhiI,.index-module_widthIntrinsic__AMhiI .index-module_rows__IJe-X{width:fit-content}.index-module_widthIntrinsic__AMhiI .index-module_row__wpjpD{min-width:fit-content}.index-module_heightIntrinsic__8V9BW{height:fit-content}";
-var styles$1 = {"inspector":"index-module_inspector__q3168","rows":"index-module_rows__IJe-X","row":"index-module_row__wpjpD","getter":"index-module_getter__L0ERN","row-preview":"index-module_row-preview__tqyCP","row-indent":"index-module_row-indent__xyNRx","row-content":"index-module_row-content__S5er1","row-expand":"index-module_row-expand__vsdGW","visible":"index-module_visible__D7mEE","expanded":"index-module_expanded__woQ-O","row-key":"index-module_row-key__k15GN","row-colon":"index-module_row-colon__4OAG3","contextmenu":"index-module_contextmenu__z28D2","contextmenu-item":"index-module_contextmenu-item__sqyM1","widthIntrinsic":"index-module_widthIntrinsic__AMhiI","heightIntrinsic":"index-module_heightIntrinsic__8V9BW"};
+var css_248z$1 = ".index-module_inspector__q3168{--bg:#1e1e1e;--color:#e3e3e3;--hover-bg:#33373f;--key-color:#8eacf2;--expand-icon:url(\"data:image/svg+xml;charset=utf-8,%3Csvg width='14' height='14' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M10.5 6.65 4.9 2.8v7.7' fill='%23000'/%3E%3C/svg%3E\");background:var(--bg);color:var(--color);cursor:default;display:block;height:inherit;overflow:auto;width:inherit}.index-module_inspector__q3168 ::selection{background:#b8c6ff;color:#000}.index-module_inspector__q3168,.index-module_inspector__q3168 *{box-sizing:border-box;font-family:monospace;font-size:12px}.index-module_measure__RvR3C{height:0;min-width:0;pointer-events:none;position:static;visibility:hidden;width:fit-content;z-index:-1}.index-module_rows__IJe-X{height:auto;position:relative;width:inherit}.index-module_row__wpjpD{align-items:center;display:flex;position:absolute;width:100%}.index-module_row__wpjpD.index-module_getter__L0ERN .index-module_row-preview__tqyCP:hover{text-decoration:underline}.index-module_row-indent__xyNRx{background-image:linear-gradient(90deg,transparent 9px,#727272 0,#727272 10px,transparent 0);background-size:16px;display:block;height:inherit}.index-module_row-content__S5er1{align-items:center;border-radius:.25rem;display:flex;padding:0 .25rem 0 .125rem;width:inherit}.index-module_row-content__S5er1:hover{background:var(--hover-bg)}.index-module_row-expand__vsdGW{height:14px;mask-size:auto;min-height:14px;min-width:14px;transition:transform .1s ease-in-out;width:14px}.index-module_row-expand__vsdGW.index-module_visible__D7mEE{background-color:currentColor;mask-image:var(--expand-icon)}.index-module_row-expand__vsdGW.index-module_visible__D7mEE.index-module_expanded__woQ-O{transform:rotate(90deg)}.index-module_row-key__k15GN{color:var(--key-color);font-weight:bolder;white-space:nowrap}.index-module_row-key__k15GN.index-module_property__XiKbh{opacity:.6}.index-module_row-key__k15GN.index-module_virtualKey__rULrX{color:#868686;font-weight:400}.index-module_row-key__k15GN.index-module_prototype__Wv2I0{font-weight:400;opacity:.6}.index-module_row-colon__4OAG3{white-space:pre}.index-module_row-preview__tqyCP{white-space:nowrap}.index-module_contextmenu__z28D2{background:#181818;border:1px solid #252525;border-radius:.75rem;box-shadow:0 2px 16px 4px rgba(0,0,0,.1);flex-direction:column;gap:.125rem;padding:.5rem;position:fixed;z-index:999}.index-module_contextmenu__z28D2 *{color:#fff;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Oxygen-Sans,Ubuntu,Cantarell,Helvetica Neue,sans-serif;font-size:.75rem}.index-module_contextmenu-item__sqyM1{border-radius:.25rem;cursor:pointer;padding:.375rem .75rem;white-space:nowrap}.index-module_contextmenu-item__sqyM1:hover{background:#242424}.index-module_widthIntrinsic__AMhiI,.index-module_widthIntrinsic__AMhiI .index-module_rows__IJe-X{width:fit-content}.index-module_widthIntrinsic__AMhiI .index-module_row__wpjpD{min-width:fit-content}.index-module_heightIntrinsic__8V9BW{height:fit-content}.index-module_row__wpjpD.index-module_measure__RvR3C{min-width:0;position:static;width:fit-content}";
+var styles$1 = {"inspector":"index-module_inspector__q3168","measure":"index-module_measure__RvR3C","rows":"index-module_rows__IJe-X","row":"index-module_row__wpjpD","getter":"index-module_getter__L0ERN","row-preview":"index-module_row-preview__tqyCP","row-indent":"index-module_row-indent__xyNRx","row-content":"index-module_row-content__S5er1","row-expand":"index-module_row-expand__vsdGW","visible":"index-module_visible__D7mEE","expanded":"index-module_expanded__woQ-O","row-key":"index-module_row-key__k15GN","property":"index-module_property__XiKbh","virtualKey":"index-module_virtualKey__rULrX","prototype":"index-module_prototype__Wv2I0","row-colon":"index-module_row-colon__4OAG3","contextmenu":"index-module_contextmenu__z28D2","contextmenu-item":"index-module_contextmenu-item__sqyM1","widthIntrinsic":"index-module_widthIntrinsic__AMhiI","heightIntrinsic":"index-module_heightIntrinsic__8V9BW"};
 styleInject(css_248z$1);
 
 const ROW_HEIGHT = 18;
@@ -262,7 +281,16 @@ function buildPreview(value, previewOptions) {
         if (type === 'Array') {
             const len = value.length;
             if (showDetail) {
-                preview = value.slice(0, options.maxArrayLength).map((item) => traverse(item, depth + 1)).join(', ');
+                const items = [];
+                for (let i = 0; i < len && i < options.maxArrayLength; i++) {
+                    const descriptor = Object.getOwnPropertyDescriptor(value, String(i));
+                    if (!descriptor || descriptor.get) {
+                        items.push('(...)');
+                        continue;
+                    }
+                    items.push(traverse(descriptor.value, depth + 1));
+                }
+                preview = items.join(', ');
                 if (len > options.maxArrayLength)
                     preview += ', ' + symbols.ellipsis;
                 return wrapText(`${len > 1 ? safeWrapText(`(${len})`, 'desc') : ''} [${preview}]`, 'array');
@@ -271,11 +299,18 @@ function buildPreview(value, previewOptions) {
         }
         if (type === 'Object') {
             if (showDetail) {
-                const keys = Reflect.ownKeys(value);
+                const allKeys = Reflect.ownKeys(value);
+                const keys = allKeys.filter(key => {
+                    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+                    return descriptor && !descriptor.get;
+                });
                 preview = keys.slice(0, options.maxObjectLength).map((k) => {
-                    const t = value[k];
+                    const t = Object.getOwnPropertyDescriptor(value, k)?.value;
                     return `${wrapKey(k)}: ${wrapText(traverse(t, depth + 1), getType(t).toLowerCase())}`;
                 }).join(', ');
+                if (keys.length !== allKeys.length && keys.length == 0) {
+                    preview += symbols.ellipsis;
+                }
                 if (keys.length > options.maxObjectLength)
                     preview += ', ' + symbols.ellipsis;
                 return wrapText(`{${preview}}`, 'object');
@@ -290,13 +325,15 @@ function buildPreview(value, previewOptions) {
         if (type.includes('Function')) {
             if (showDetail) {
                 const fnCode = functionToCode(value);
-                const cName = value.constructor?.toString().toLowerCase() || '';
-                const isArrow = !value.prototype && !/^(?:async\s+)?function/.test(fnCode);
+                const cName = Function.prototype.toString.call(Object.getPrototypeOf(value)?.constructor).toLowerCase() || '';
+                const prototype = Object.getOwnPropertyDescriptor(value, 'prototype')?.value;
+                const className = Object.getOwnPropertyDescriptor(prototype ?? {}, 'constructor')?.value?.name;
+                const isArrow = !prototype && !/^(?:async\s+)?function/.test(fnCode) && fnCode.includes('=>');
                 const isAsync = cName.includes('async');
                 const isGenerator = cName.includes('generator');
                 const isClass = (fnCode || '').trim().startsWith('class');
                 if (isClass) {
-                    return wrapText(`${wrapText('class', 'keyword')} ${safeString(value.prototype?.constructor?.name)}`, 'function');
+                    return wrapText(`${wrapText('class', 'keyword')} ${safeString(className)}`, 'function');
                 }
                 else if (isArrow) {
                     return wrapText(`${isAsync ? wrapText('async', 'keyword') : ''} () => {}`, 'function');
@@ -305,7 +342,8 @@ function buildPreview(value, previewOptions) {
                     preview += isAsync ? wrapText('async', 'keyword') : '';
                     preview += wrapText(`${isAsync ? ' ' : ''}${symbols.function}`, 'keyword');
                     preview += isGenerator ? wrapText('*', 'keyword') : '';
-                    preview += ` ${value.name && fnCode.match(/function([\s\S]*?)\(.*?\)/)?.[1]?.replace('*', '').trim() ? safeString(value.name) : ''}()`;
+                    const name = Object.getOwnPropertyDescriptor(value, 'name')?.value;
+                    preview += ` ${name && fnCode.match(/function([\s\S]*?)\(.*?\)/)?.[1]?.replace('*', '').trim() ? safeString(name) : ''}()`;
                     return wrapText(preview, 'function');
                 }
             }
@@ -314,7 +352,7 @@ function buildPreview(value, previewOptions) {
             }
         }
         if (isElement(value)) {
-            const id = value.id;
+            const id = Element.prototype.getAttribute.call(value, "id");
             const classArr = [...value.classList];
             const className = (classArr.length > 0 ? '.' : '') + classArr.join('.');
             return wrapText(`${safeWrapText(value.tagName.toLowerCase(), 'element-tagName')}${safeWrapText(id ? '#' + id : '', 'element-id')}${safeWrapText(className, 'element-className')}`, 'generic');
@@ -349,7 +387,7 @@ function buildPreview(value, previewOptions) {
             return wrapText(`Set(${safeString(size)})`, 'set');
         }
         if (type == 'Error') {
-            return wrapText('Error: ' + safeString(value.message), 'error');
+            return wrapText('Error: ' + safeString(Object.getOwnPropertyDescriptor(value, "message")?.value ?? ""), 'error');
         }
         if ([
             'Number', 'Boolean', 'Null', 'Undefined', 'Symbol', 'Date', 'Regexp'
@@ -360,6 +398,9 @@ function buildPreview(value, previewOptions) {
             return wrapText(safeString(value), type.toLowerCase());
         }
         else {
+            if (isProxy(value)) {
+                return safeWrapText(`Proxy(${type})`, type.toLowerCase());
+            }
             return safeWrapText(type, type.toLowerCase());
         }
     }
@@ -368,6 +409,9 @@ function buildPreview(value, previewOptions) {
     }
     catch (e) {
         const type = getType(options.self || value);
+        if (isProxy(value)) {
+            return safeWrapText(`Proxy(${type})`, type.toLowerCase());
+        }
         return safeWrapText(type, type.toLowerCase());
     }
 }
@@ -381,6 +425,7 @@ class Node extends EventEmitter {
         this._visibleSize = size;
         this.emit('visibleSizeChange');
     }
+    widthDirty = false;
     id;
     parent;
     level;
@@ -400,11 +445,11 @@ class Node extends EventEmitter {
     path;
     constructor(id, { parent, key, value, valueGetter, preview, flags = [], target, attachment = null }) {
         super();
-        const valueType = getType(value);
+        const valueType = safeGetType(value);
         try {
             if (typeof preview !== 'string') {
                 preview = buildPreview(value, {
-                    self: valueType.includes('Element') ? self : null
+                    self: valueType.includes('Element') ? target : null
                 });
             }
         }
@@ -438,12 +483,15 @@ class Node extends EventEmitter {
 class NodeManager {
     nextId;
     nodeMap;
+    dirtyNodes;
     root;
     visibleNodes;
     alive = true;
+    maxWidth = 0;
     constructor(rootValue) {
         this.nextId = 0;
         this.nodeMap = new Map();
+        this.dirtyNodes = [];
         this.root = this.createNode({
             value: rootValue
         });
@@ -453,22 +501,34 @@ class NodeManager {
     allocateId() {
         return this.nextId++;
     }
-    createNode({ parent, key, value, valueGetter, preview, flags = [], target, attachment = null }) {
-        const valueType = getType(value);
-        try {
-            if (typeof preview !== 'string') {
-                preview = buildPreview(value, {
-                    self: valueType.includes('Element') ? self : null
-                });
+    updateContentWidth(node, width) {
+        node.contentWidth = width;
+        node.widthDirty = false;
+        if (width >= this.maxWidth) {
+            this.maxWidth = width;
+        }
+    }
+    markWidthDirty(node) {
+        if (node.widthDirty)
+            return;
+        node.widthDirty = true;
+        this.dirtyNodes.push(node.id);
+    }
+    recalculateMaxWidth() {
+        let maxWidth = 0;
+        for (const node of this.visibleNodes) {
+            if (node.contentWidth > maxWidth) {
+                maxWidth = node.contentWidth;
             }
         }
-        catch (e) {
-            preview = `[Exception: ${e}]`;
-        }
+        this.maxWidth = maxWidth;
+    }
+    createNode({ parent, key, value, valueGetter, preview, flags = [], target, attachment = null }) {
         const node = new Node(this.allocateId(), { parent, key, value, valueGetter, preview, flags, target, attachment });
         node.contentWidth = 0;
         node.path = this.getNodePath(node);
         this.nodeMap.set(node.id, node);
+        this.markWidthDirty(node);
         return node;
     }
     accessNodeGetter(node) {
@@ -497,6 +557,7 @@ class NodeManager {
             node.flags.push('styleless');
             node.preview = node.value;
         }
+        this.markWidthDirty(node);
     }
     expandNode(node, options = {
         prototype: true,
@@ -580,6 +641,7 @@ class NodeManager {
         for (const item of expandQueue) {
             this.expandNode(item);
         }
+        this.recalculateMaxWidth();
         return true;
     }
     collapseNode(node) {
@@ -606,6 +668,7 @@ class NodeManager {
         this.updateVisibleSize(node);
         this.visibleNodes = [];
         this._buildVisibleNodes(this.root);
+        this.recalculateMaxWidth();
     }
     destroyNode(node, self = true) {
         for (const child of node.children) {
@@ -615,6 +678,9 @@ class NodeManager {
         node.setVisibleSize(1);
         if (self) {
             this.nodeMap.delete(node.id);
+            if (node.contentWidth === this.maxWidth) {
+                this.recalculateMaxWidth();
+            }
             if (node.parent) {
                 const index = node.parent.children.indexOf(node);
                 if (index !== -1) {
@@ -928,13 +994,21 @@ class DefaultViewportProvider extends ViewportProvider {
     inspectorEl;
     resizeObserver;
     onScroll = () => this.notifyScroll();
-    onResize = () => this.notifyResize();
+    onResize = (entries) => {
+        this.viewportWidth = entries[0].contentRect.width;
+        this.viewportHeight = entries[0].contentRect.height;
+        this.notifyResize();
+    };
+    viewportWidth;
+    viewportHeight;
     constructor(inspectorEl) {
         super();
         this.inspectorEl = inspectorEl;
         this.inspectorEl.addEventListener('scroll', this.onScroll);
         this.resizeObserver = new ResizeObserver(this.onResize);
         this.resizeObserver.observe(this.inspectorEl);
+        this.viewportWidth = this.inspectorEl.clientWidth;
+        this.viewportHeight = this.inspectorEl.clientHeight;
     }
     destroy() {
         this.resizeObserver?.disconnect();
@@ -947,11 +1021,17 @@ class DefaultViewportProvider extends ViewportProvider {
         return this.inspectorEl.scrollLeft;
     }
     getClientWidth() {
-        return this.inspectorEl.clientWidth;
+        return this.viewportWidth;
     }
     getClientHeight() {
-        return this.inspectorEl.clientHeight;
+        return this.viewportHeight;
     }
+}
+
+class RowData {
+    node;
+    index;
+    lastUsed = Date.now();
 }
 
 class ObjectInspector {
@@ -959,11 +1039,16 @@ class ObjectInspector {
     rows;
     options;
     inspectorEl = document.createElement('div');
+    measureEl = document.createElement('div');
     rowsEl = document.createElement('div');
     menuEl = document.createElement('div');
     onScroll;
     onResize;
     onWindowClick;
+    scrollSpeed = 0;
+    lastScrollTop = 0;
+    lastScrollTime = 0;
+    measureRow;
     alive = true;
     viewportProvider;
     defaultViewportProvider;
@@ -1010,13 +1095,17 @@ class ObjectInspector {
                 height: this.height
             });
             this.render();
-            this.rowsEl.style.height = `${(this.nodeManager.findChildrenSize(this.nodeManager.root) + 1) * ROW_HEIGHT}px`;
+            this.rowsEl.style.height = `${(this.nodeManager.root.visibleSize) * ROW_HEIGHT}px`;
         });
         this.inspectorEl.className = styles$1.inspector;
+        this.measureEl.className = styles$1.measure;
         this.rowsEl.className = styles$1.rows;
         this.menuEl.className = styles$1.contextmenu;
         container.appendChild(this.inspectorEl);
+        this.inspectorEl.appendChild(this.measureEl);
         this.inspectorEl.appendChild(this.rowsEl);
+        this.measureRow = this.createRow(true);
+        this.measureEl.appendChild(this.measureRow.row);
         this.onWindowClick = () => {
             this.menuEl.remove();
         };
@@ -1038,43 +1127,27 @@ class ObjectInspector {
                 this.rows.forEach(row => row.updateMaxWidth(event.clientWidth));
             }
         };
-        let lastTime = 0;
-        let lastScroll = 0;
-        let timeout = null;
+        let renderPending = false;
         this.onScroll = (event) => {
             const scrollTop = event.scrollTop;
-            if (scrollTop == lastScroll)
+            if (scrollTop == this.lastScrollTop)
                 return;
-            const viewportSize = Math.ceil(event.clientHeight / ROW_HEIGHT);
             const now = Date.now();
-            const delta = now - lastTime;
-            const distance = Math.abs(scrollTop - lastScroll);
+            const delta = now - this.lastScrollTime;
+            const distance = Math.abs(scrollTop - this.lastScrollTop);
             const speed = distance / delta * 1000;
-            let tolerant = speed / ROW_HEIGHT * 2;
-            let topTolerance = tolerant;
-            let bottomTolerance = tolerant;
-            if (tolerant > viewportSize / 2) {
-                tolerant = viewportSize / 2;
-            }
-            if (scrollTop > lastScroll) {
-                bottomTolerance = tolerant;
-                topTolerance = ~~(tolerant * 0.3);
-            }
-            else {
-                topTolerance = tolerant;
-                bottomTolerance = ~~(tolerant * 0.3);
-            }
-            lastScroll = scrollTop;
-            lastTime = now;
-            this.requestRender(topTolerance, bottomTolerance);
-            if (timeout) {
-                clearTimeout(timeout);
-            }
-            timeout = setTimeout(() => {
-                this.render(topTolerance, bottomTolerance);
-                timeout = null;
-            }, 33);
+            this.lastScrollTop = scrollTop;
+            this.lastScrollTime = now;
+            this.scrollSpeed = speed;
+            if (renderPending)
+                return;
+            renderPending = true;
+            requestAnimationFrame(() => {
+                renderPending = false;
+                this.render();
+            });
         };
+        this.measureDirtyRows();
         this.defaultViewportProvider = new DefaultViewportProvider(this.inspectorEl);
         this.attachViewportProvider(this.defaultViewportProvider);
         this.rowsEl.style.height = `${(this.nodeManager.findChildrenSize(this.nodeManager.root) + 1) * ROW_HEIGHT}px`;
@@ -1187,6 +1260,30 @@ class ObjectInspector {
             this.menuEl.style.left = `${windowWidth - width}px`;
         }
     };
+    measureDirtyRows() {
+        if (!this.alive)
+            return;
+        let scrollSpeed = this.scrollSpeed;
+        let maxWidth = this.nodeManager.maxWidth;
+        const count = Math.max(1, ~~(Math.pow(1 - scrollSpeed / 5000, 2) * 500));
+        const dirtyNodes = this.nodeManager.dirtyNodes.splice(0, count);
+        for (const nodeId of dirtyNodes) {
+            const node = this.nodeManager.nodeMap.get(nodeId);
+            if (!node)
+                continue;
+            this.measureRow.update(node);
+            this.nodeManager.updateContentWidth(node, this.measureRow.measureWidth());
+        }
+        if (this.scrollSpeed == scrollSpeed) {
+            this.scrollSpeed = 0;
+        }
+        requestAnimationFrame(() => {
+            if (this.nodeManager.maxWidth != maxWidth) {
+                this.render();
+            }
+            this.measureDirtyRows();
+        });
+    }
     getRowRange = (topTolerance = 0, bottomTolerance = 0) => {
         const scrollTop = this.viewportProvider.getScrollTop();
         const height = this.viewportProvider.getClientHeight();
@@ -1232,7 +1329,9 @@ class ObjectInspector {
             };
         }
     };
-    createRow = (node, index) => {
+    createRow = (measure = false) => {
+        const self = this;
+        const rowData = new RowData();
         const row = document.createElement('div');
         const indent = document.createElement('div');
         const content = document.createElement('div');
@@ -1249,137 +1348,149 @@ class ObjectInspector {
         key.className = styles$1['row-key'];
         colon.className = styles$1['row-colon'];
         preview.className = styles$1['row-preview'];
-        row.style.top = `${index * ROW_HEIGHT}px`;
+        if (measure) {
+            row.classList.add(styles$1.measure);
+        }
         row.appendChild(indent);
         row.appendChild(content);
         content.appendChild(expand);
         content.appendChild(key);
         content.appendChild(colon);
         content.appendChild(preview);
+        function updateNode(node) {
+            rowData.node = node;
+            updateKey(rowData.node.key);
+            updatePreview(rowData.node.preview);
+            updateIndent(rowData.node.level);
+        }
+        let lastKey = '';
+        function updateKey(val) {
+            if (lastKey == val)
+                return;
+            lastKey = val;
+            key.textContent = val;
+        }
+        let lastPreview = '';
+        function updatePreview(val) {
+            if (lastPreview == val)
+                return;
+            lastPreview = val;
+            preview.innerHTML = val;
+        }
         function updateIndent(level) {
             indent.style.minWidth = `${level * ROW_INDENT}px`;
         }
-        function updateKey(val) {
-            key.textContent = val;
-        }
-        function updatePreview(val) {
-            preview.innerHTML = val;
-        }
-        function updatePosition(val) {
-            if (index === val)
-                return;
-            index = val;
-            row.style.top = `${index * ROW_HEIGHT}px`;
+        function updatePosition(index) {
+            rowData.index = index;
+            row.style.top = `${rowData.index * ROW_HEIGHT}px`;
         }
         let lastMaxWidth = 0;
-        const updateMaxWidth = (width) => {
+        function updateMaxWidth(width) {
             // set the max-width to the viewport width when options.width is set to "viewport" mode
-            if (this.options.width === 'intrinsic')
+            if (self.options.width === 'intrinsic')
                 return;
             if (width === lastMaxWidth)
                 return;
             if (!width) {
-                width = this.viewportProvider.getClientWidth();
+                width = self.viewportProvider.getClientWidth();
             }
             row.style.maxWidth = `${width}px`;
             lastMaxWidth = width;
-        };
-        const measureWidth = () => {
-            const target = this.nodeManager.nodeMap.get(node.id);
-            if (!target)
-                return;
-            row.style.minWidth = '0px';
-            row.style.width = 'fit-content';
-            target.contentWidth = row.scrollWidth;
-            this.nodeManager.nodeMap.set(node.id, target);
-            row.style.removeProperty('min-width');
-            row.style.removeProperty('width');
-        };
-        let self = this;
-        function initialize() {
-            updateKey(node.key);
-            updatePreview(node.preview);
-            updateIndent(node.level);
-            updateMaxWidth();
+        }
+        function measureWidth() {
+            return row.scrollWidth;
+        }
+        function update(node, index) {
+            const flags = node.flags;
+            updateNode(node);
+            if (!measure) {
+                updatePosition(index);
+                updateMaxWidth();
+            }
             key.style.removeProperty('opacity');
-            key.style.removeProperty('fontWeight');
+            key.style.removeProperty('font-weight');
             key.style.removeProperty('color');
-            if (node.flags.includes('property')) {
-                key.style.opacity = '.6';
+            key.classList.toggle(styles$1.property, flags.includes('property'));
+            key.classList.toggle(styles$1.virtualKey, flags.includes('[[prototype]]') || flags.includes('[[entries]]'));
+            key.classList.toggle(styles$1.prototype, flags.includes('prototype'));
+            row.classList.toggle(styles$1.getter, rowData.node.valueGetter && rowData.node.preview === '(...)' ? true : false);
+            const colonContent = rowData.node.key && rowData.node.preview ? ': ' : '';
+            if (colon.textContent != colonContent) {
+                colon.textContent = colonContent;
             }
-            if (node.flags.includes('[[prototype]]') ||
-                node.flags.includes('[[entries]]')) {
-                key.style.color = '#868686';
-                key.style.fontWeight = '400';
-            }
-            if (node.flags.includes('prototype')) {
-                key.style.fontWeight = '400';
-                key.style.opacity = '.6';
-            }
-            if (node.valueGetter && node.preview === '(...)') {
-                row.classList.add(styles$1.getter);
-                preview.addEventListener('click', getValue);
-                function getValue(e) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    self.nodeManager.accessNodeGetter(node);
-                    preview.removeEventListener('click', getValue);
-                    initialize();
-                }
-            }
-            else {
-                row.classList.remove(styles$1.getter);
-            }
-            if (node.key && node.preview) {
-                colon.textContent = ': ';
-            }
-            else {
-                colon.textContent = '';
-            }
-            if (node.hasChildren) {
+            if (rowData.node.hasChildren) {
                 expand.classList.add(styles$1.visible);
             }
             else {
                 expand.classList.remove(styles$1.visible);
             }
-            if (node.expanded) {
+            if (rowData.node.expanded) {
                 expand.classList.add(styles$1.expanded);
             }
             else {
                 expand.classList.remove(styles$1.expanded);
             }
         }
-        initialize();
-        row.addEventListener('click', () => {
-            if (!node)
+        function onClick() {
+            if (!rowData.node.hasChildren)
                 return;
-            if (!node.hasChildren)
-                return;
-            if (node.expanded) {
-                this.nodeManager.collapseNode(node);
+            if (rowData.node.expanded) {
+                self.nodeManager.collapseNode(rowData.node);
                 expand.classList.remove(styles$1.expanded);
             }
             else {
-                this.nodeManager.expandNode(node);
+                self.nodeManager.expandNode(rowData.node);
                 expand.classList.add(styles$1.expanded);
             }
-            this.render();
-        });
-        row.addEventListener('contextmenu', (e) => {
+            self.render();
+        }
+        function onContextMenu(e) {
             e.preventDefault();
             e.stopPropagation();
-            this.buildContextMenu(node, e.clientX, e.clientY);
+            self.buildContextMenu(rowData.node, e.clientX, e.clientY);
             return false;
-        });
+        }
+        function onPreviewClick(e) {
+            if (rowData.node.valueGetter && rowData.node.preview === '(...)') {
+                e.preventDefault();
+                e.stopPropagation();
+                self.nodeManager.accessNodeGetter(rowData.node);
+                update(rowData.node, rowData.index);
+            }
+        }
+        function destroy() {
+            row.removeEventListener('click', onClick);
+            row.removeEventListener('contextmenu', onContextMenu);
+            preview.removeEventListener('click', onPreviewClick);
+            row.remove();
+        }
+        row.addEventListener('click', onClick);
+        row.addEventListener('contextmenu', onContextMenu);
+        preview.addEventListener('click', onPreviewClick);
         return {
-            row, index, updatePosition, measureWidth, updateMaxWidth
+            row, updatePosition, measureWidth, updateMaxWidth, update, destroy
         };
     };
-    render = (topTolerance = 0, bottomTolerance = 0) => {
+    render = () => {
         if (!this.alive)
             return;
+        const scrollTop = this.viewportProvider.getScrollTop();
+        const viewportSize = this.viewportProvider.getClientHeight();
+        let tolerant = this.scrollSpeed / ROW_HEIGHT;
+        let topTolerance = tolerant;
+        let bottomTolerance = tolerant;
+        if (tolerant > viewportSize) {
+            tolerant = viewportSize;
+        }
+        if (scrollTop > this.lastScrollTop) {
+            bottomTolerance = .9 * tolerant;
+            topTolerance = -0.4 * tolerant;
+        }
+        else {
+            topTolerance = .9 * tolerant;
+            bottomTolerance = -0.4 * tolerant;
+        }
         const rowRange = this.getRowRange(topTolerance, bottomTolerance);
-        const scrollLeft = this.inspectorEl.scrollLeft;
         const nodes = this.nodeManager.visibleNodes.slice(rowRange.start, rowRange.end + 1);
         const { visibleNodes } = this.nodeManager;
         const visibleNodeIds = new Set();
@@ -1399,7 +1510,7 @@ class ObjectInspector {
             const node = nodes[i];
             let row;
             if (!this.rows.has(node.id)) {
-                row = this.createRow(node, rowRange.start + i);
+                row = this.createRow();
                 if (last) {
                     this.rowsEl.insertBefore(row.row, last);
                 }
@@ -1410,27 +1521,18 @@ class ObjectInspector {
             }
             else {
                 row = this.rows.get(node.id);
-                row?.updatePosition(rowRange.start + i);
             }
-            row?.measureWidth();
+            row?.update(node, rowRange.start + i);
+            last = row?.row;
+        }
+        for (let i = nodes.length - 1; i >= 0; i--) {
+            const row = this.rows.get(nodes[i].id);
             if (this.options.width === 'viewport') {
                 row?.updateMaxWidth();
             }
-            last = row?.row;
         }
-        if (scrollLeft > this.inspectorEl.scrollWidth) {
-            this.inspectorEl.scrollLeft = this.inspectorEl.scrollWidth;
-        }
-        else {
-            this.inspectorEl.scrollLeft = scrollLeft;
-        }
-        let maxWidth = 0;
-        this.nodeManager.visibleNodes.forEach(node => {
-            maxWidth = node.contentWidth > maxWidth ? node.contentWidth : maxWidth;
-        });
-        this.rowsEl.style.width = `${maxWidth}px`;
+        this.rowsEl.style.width = `${this.nodeManager.maxWidth}px`;
     };
-    requestRender = throttle((...arg) => this.alive && this.render(...arg), 66);
 }
 
 export { ObjectInspector as default };

@@ -1,6 +1,6 @@
 import { buildPreview } from "./buildPreview";
 import { NodeOptions } from "./types";
-import { EventEmitter, getType, isExpandable } from "./utils";
+import { EventEmitter, isExpandable, safeGetType } from "./utils";
 
 export class Node extends EventEmitter {
     private _visibleSize = 1;
@@ -12,6 +12,8 @@ export class Node extends EventEmitter {
         this._visibleSize = size;
         this.emit('visibleSizeChange')
     }
+
+    widthDirty = false;
 
     id!: number;
     parent?: Node;
@@ -44,11 +46,11 @@ export class Node extends EventEmitter {
     }: NodeOptions) {
         super();
 
-        const valueType = getType(value);
+        const valueType = safeGetType(value);
         try {
             if (typeof preview !== 'string') {
                 preview = buildPreview(value, {
-                    self: valueType.includes('Element') ? self : null
+                    self: valueType.includes('Element') ? target : null
                 })
             }
         } catch (e) {
@@ -69,7 +71,7 @@ export class Node extends EventEmitter {
         this.attachment = attachment || null;
     }
 
-    calculateVisibleSize () {
+    calculateVisibleSize() {
         let size = 1;
         if (!this.expanded) return size;
 

@@ -25,6 +25,16 @@
     font-size: 12px;
 }
 
+.measure {
+    position: static;
+    width: fit-content;
+    min-width: 0;
+    visibility: hidden;
+    z-index: -1;
+    pointer-events: none;
+    height: 0;
+}
+
 .rows {
     position: relative;
     width: inherit;
@@ -85,6 +95,20 @@
     white-space: nowrap;
 }
 
+.row-key.property {
+    opacity: .6;
+}
+
+.row-key.virtualKey {
+    color: #868686;
+    font-weight: 400;
+}
+
+.row-key.prototype {
+    opacity: .6;
+    font-weight: 400;
+}
+
 .row-colon {
     white-space: pre;
 }
@@ -133,4 +157,10 @@
 
 .heightIntrinsic {
     height: fit-content;
+}
+
+.row.measure {
+    position: static;
+    width: fit-content;
+    min-width: 0;
 }

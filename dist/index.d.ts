@@ -5,11 +5,16 @@ declare class ObjectInspector {
     private readonly rows;
     private readonly options;
     private readonly inspectorEl;
+    private readonly measureEl;
     private readonly rowsEl;
     private readonly menuEl;
     private onScroll;
     private onResize;
     private onWindowClick;
+    private scrollSpeed;
+    private lastScrollTop;
+    private lastScrollTime;
+    private measureRow;
     private alive;
     private viewportProvider;
     private defaultViewportProvider;
@@ -26,10 +31,10 @@ declare class ObjectInspector {
     detachViewportProvider(): void;
     private syncViewport;
     private buildContextMenu;
+    private measureDirtyRows;
     private getRowRange;
     private createRow;
     private render;
-    private requestRender;
 }
 export default ObjectInspector;
 //# sourceMappingURL=index.d.ts.map
