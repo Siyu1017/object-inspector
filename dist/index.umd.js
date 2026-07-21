@@ -1,5 +1,5 @@
 /*!
- * object-inspector v1.1.3
+ * object-inspector v1.2.0
  * Copyright (c) Siyu1017 2026
  */
 (function (global, factory) {
@@ -8,7 +8,7 @@
     (global = typeof globalThis !== 'undefined' ? globalThis : global || self, global.ObjectInspector = factory());
 })(this, (function () { 'use strict';
 
-    const __VERSION__ = '1.1.3';
+    const __VERSION__ = '1.2.0';
 
     function getType(obj) {
         return {}.toString.call(obj).slice(8, -1);

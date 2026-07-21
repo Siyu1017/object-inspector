@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-07-21
+
 ### Added
 
 - Added virtualized text selection and copy support for Object Inspector
