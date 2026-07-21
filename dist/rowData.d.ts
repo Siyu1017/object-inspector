@@ -1,6 +1,6 @@
-import { Node } from "./node";
+import { InspectorNode } from "./inspectorNode";
 export declare class RowData {
-    node: Node;
+    node: InspectorNode;
     index: number;
     lastUsed: number;
 }

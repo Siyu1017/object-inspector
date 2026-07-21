@@ -45,11 +45,11 @@
         catch (e) { }
         return '';
     }
-    function safeString(str) {
+    function safeString(str, escape = true) {
         if (typeof str !== 'string') {
             str = String(str);
         }
-        return safeEscape(str);
+        return escape ? safeEscape(str) : str;
     }
     function isProxy(value) {
         try {
@@ -193,6 +193,31 @@
             this.listeners.clear();
         }
     }
+    function getTextOffset(container, offset, root) {
+        const range = document.createRange();
+        range.setStart(root, 0);
+        range.setEnd(container, offset);
+        return range.toString().length;
+    }
+    function findTextPosition(root, offset) {
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        let current = 0;
+        while (walker.nextNode()) {
+            const textNode = walker.currentNode;
+            const length = textNode.length;
+            if (offset <= current + length) {
+                return {
+                    node: textNode,
+                    offset: offset - current
+                };
+            }
+            current += length;
+        }
+        return {
+            node: root,
+            offset: root.childNodes.length
+        };
+    }
 
     function styleInject(css, ref) {
       if ( ref === void 0 ) ref = {};
@@ -259,13 +284,16 @@
             type: 'normal',
             self: null
         }, previewOptions);
+        function safeString$1(text) {
+            return safeString(text, options.type !== 'plaintext');
+        }
         function wrapText(text, type) {
-            if (options.type === 'styleless')
+            if (options.type === 'plaintext')
                 return `${text}`;
             return `<span class="${styles[type]}">${text}</span>`;
         }
         function safeWrapText(text, type) {
-            return wrapText(safeString(text), type);
+            return wrapText(safeString$1(text), type);
         }
         function wrapKey(key) {
             return safeWrapText(key, 'preview-key');
@@ -301,7 +329,7 @@
                         preview += ', ' + symbols.ellipsis;
                     return wrapText(`${len > 1 ? safeWrapText(`(${len})`, 'desc') : ''} [${preview}]`, 'array');
                 }
-                return wrapText(`Array(${safeString(len)})`, 'array');
+                return wrapText(`Array(${safeString$1(len)})`, 'array');
             }
             if (type === 'Object') {
                 if (showDetail) {
@@ -326,7 +354,7 @@
                 return wrapText(`Object`, 'object');
             }
             if (type === 'String') {
-                return isTop ? wrapText(`\"${safeString(value)}\"`, 'string') : wrapText(`\'${safeString(value)}\'`, 'string');
+                return isTop ? wrapText(`\"${safeString$1(value)}\"`, 'string') : wrapText(`\'${safeString$1(value)}\'`, 'string');
             }
             if (type.includes('Function')) {
                 if (showDetail) {
@@ -339,7 +367,7 @@
                     const isGenerator = cName.includes('generator');
                     const isClass = (fnCode || '').trim().startsWith('class');
                     if (isClass) {
-                        return wrapText(`${wrapText('class', 'keyword')} ${safeString(className)}`, 'function');
+                        return wrapText(`${wrapText('class', 'keyword')} ${safeString$1(className)}`, 'function');
                     }
                     else if (isArrow) {
                         return wrapText(`${isAsync ? wrapText('async', 'keyword') : ''} () => {}`, 'function');
@@ -349,7 +377,7 @@
                         preview += wrapText(`${isAsync ? ' ' : ''}${symbols.function}`, 'keyword');
                         preview += isGenerator ? wrapText('*', 'keyword') : '';
                         const name = Object.getOwnPropertyDescriptor(value, 'name')?.value;
-                        preview += ` ${name && fnCode.match(/function([\s\S]*?)\(.*?\)/)?.[1]?.replace('*', '').trim() ? safeString(name) : ''}()`;
+                        preview += ` ${name && fnCode.match(/function([\s\S]*?)\(.*?\)/)?.[1]?.replace('*', '').trim() ? safeString$1(name) : ''}()`;
                         return wrapText(preview, 'function');
                     }
                 }
@@ -374,9 +402,9 @@
                     if (size > options.maxMapLength) {
                         preview += ', ' + symbols.ellipsis;
                     }
-                    return wrapText(`${wrapText(`Map(${safeString(size)})`, 'desc')} {${preview}}`, 'map');
+                    return wrapText(`${wrapText(`Map(${safeString$1(size)})`, 'desc')} {${preview}}`, 'map');
                 }
-                return wrapText(`Map(${safeString(size)})`, 'map');
+                return wrapText(`Map(${safeString$1(size)})`, 'map');
             }
             if (type === 'Set') {
                 const size = value.size;
@@ -388,20 +416,20 @@
                     if (size > options.maxSetLength) {
                         preview += ', ' + symbols.ellipsis;
                     }
-                    return wrapText(`${wrapText(`Set(${safeString(size)})`, 'desc')} {${preview}}`, 'set');
+                    return wrapText(`${wrapText(`Set(${safeString$1(size)})`, 'desc')} {${preview}}`, 'set');
                 }
-                return wrapText(`Set(${safeString(size)})`, 'set');
+                return wrapText(`Set(${safeString$1(size)})`, 'set');
             }
             if (type == 'Error') {
-                return wrapText('Error: ' + safeString(Object.getOwnPropertyDescriptor(value, "message")?.value ?? ""), 'error');
+                return wrapText('Error: ' + safeString$1(Object.getOwnPropertyDescriptor(value, "message")?.value ?? ""), 'error');
             }
             if ([
                 'Number', 'Boolean', 'Null', 'Undefined', 'Symbol', 'Date', 'Regexp'
             ].includes(type)) {
-                return wrapText(safeString(value), type.toLowerCase());
+                return wrapText(safeString$1(value), type.toLowerCase());
             }
             if (!isExpandable(value)) {
-                return wrapText(safeString(value), type.toLowerCase());
+                return wrapText(safeString$1(value), type.toLowerCase());
             }
             else {
                 if (isProxy(value)) {
@@ -422,7 +450,7 @@
         }
     }
 
-    class Node extends EventEmitter {
+    class InspectorNode extends EventEmitter {
         _visibleSize = 1;
         get visibleSize() {
             return this._visibleSize;
@@ -445,12 +473,17 @@
         expanded = false;
         target;
         preview;
+        previewText;
         flags;
         attachment;
         contentWidth = 0;
         path;
-        constructor(id, { parent, key, value, valueGetter, preview, flags = [], target, attachment = null }) {
+        constructor(id, { parent, key, value, valueGetter, preview, previewText, flags = [], target, attachment = null }) {
             super();
+            if (previewText && typeof previewText === 'string' && !preview) {
+                // no preview HTML is provided
+                preview = safeEscape(previewText);
+            }
             const valueType = safeGetType(value);
             try {
                 if (typeof preview !== 'string') {
@@ -458,9 +491,16 @@
                         self: valueType.includes('Element') ? target : null
                     });
                 }
+                if (typeof previewText !== 'string') {
+                    previewText = buildPreview(value, {
+                        self: valueType.includes('Element') ? target : null,
+                        type: 'plaintext'
+                    });
+                }
             }
             catch (e) {
                 preview = `[Exception: ${e}]`;
+                previewText = preview;
             }
             this.id = id;
             this.parent = parent;
@@ -472,6 +512,7 @@
             this.hasChildren = isExpandable(value);
             this.target = target;
             this.preview = preview || '';
+            this.previewText = previewText || '';
             this.flags = flags;
             this.attachment = attachment || null;
         }
@@ -486,12 +527,13 @@
         }
     }
 
-    class NodeManager {
+    class InspectorNodeManager {
         nextId;
         nodeMap;
         dirtyNodes;
         root;
-        visibleNodes;
+        visibleNodes = [];
+        visibleNodeIndex = new Map();
         alive = true;
         maxWidth = 0;
         constructor(rootValue) {
@@ -501,8 +543,8 @@
             this.root = this.createNode({
                 value: rootValue
             });
-            this.visibleNodes = [];
-            this._buildVisibleNodes(this.root);
+            this.buildVisibleNodes(this.root);
+            this.updateVisibleNodeIndex();
         }
         allocateId() {
             return this.nextId++;
@@ -529,8 +571,8 @@
             }
             this.maxWidth = maxWidth;
         }
-        createNode({ parent, key, value, valueGetter, preview, flags = [], target, attachment = null }) {
-            const node = new Node(this.allocateId(), { parent, key, value, valueGetter, preview, flags, target, attachment });
+        createNode({ parent, key, value, valueGetter, preview, previewText, flags = [], target, attachment = null }) {
+            const node = new InspectorNode(this.allocateId(), { parent, key, value, valueGetter, preview, previewText, flags, target, attachment });
             node.contentWidth = 0;
             node.path = this.getNodePath(node);
             this.nodeMap.set(node.id, node);
@@ -551,17 +593,23 @@
                     node.preview = buildPreview(node.value, {
                         detail: false
                     });
+                    node.previewText = buildPreview(node.value, {
+                        detail: false,
+                        type: 'plaintext'
+                    });
                 }
                 else {
                     node.preview = buildPreview(node.value);
+                    node.previewText = buildPreview(node.value, { type: 'plaintext' });
                 }
             }
             catch (e) {
                 node.value = `[Exception: ${e}]`;
                 node.valueType = 'string';
                 node.hasChildren = false;
-                node.flags.push('styleless');
+                node.flags.push('plaintext');
                 node.preview = node.value;
+                node.previewText = node.value;
             }
             this.markWidthDirty(node);
         }
@@ -595,6 +643,7 @@
                         key: '[[Entries]]',
                         value: arr,
                         preview: '',
+                        previewText: '',
                         flags: ['[[entries]]'],
                         attachment: {
                             originalType: type
@@ -620,12 +669,18 @@
                     !node.flags.includes('chunk') &&
                     options.prototype === true) {
                     let preview;
+                    let previewText;
                     if (type.includes('Element')) {
                         preview = getType(__proto__);
+                        previewText = preview;
                     }
                     else {
                         preview = buildPreview(__proto__, {
                             detail: false
+                        });
+                        previewText = buildPreview(__proto__, {
+                            detail: false,
+                            type: 'plaintext'
                         });
                     }
                     const child = this.createNode({
@@ -634,7 +689,8 @@
                         value: __proto__,
                         flags: ['[[prototype]]'],
                         target: (type.includes('Element')) ? node.target : node.value,
-                        preview: preview
+                        preview: preview,
+                        previewText: previewText
                     });
                     node.children.push(child);
                 }
@@ -643,7 +699,8 @@
             node.expanded = true;
             this.updateVisibleSize(node);
             this.visibleNodes = [];
-            this._buildVisibleNodes(this.root);
+            this.buildVisibleNodes(this.root);
+            this.updateVisibleNodeIndex();
             for (const item of expandQueue) {
                 this.expandNode(item);
             }
@@ -667,13 +724,15 @@
                     child.value = '(...)';
                     child.valueType = 'string';
                     child.preview = child.value;
+                    child.previewText = child.value;
                     child.expanded = false;
                 }
             }
             node.expanded = false;
             this.updateVisibleSize(node);
             this.visibleNodes = [];
-            this._buildVisibleNodes(this.root);
+            this.buildVisibleNodes(this.root);
+            this.updateVisibleNodeIndex();
             this.recalculateMaxWidth();
         }
         destroyNode(node, self = true) {
@@ -765,11 +824,11 @@
                 datas.forEach(data => {
                     let childFlags = [...flags];
                     if (data.type === 'getter') {
-                        childFlags.push('styleless');
+                        childFlags.push('plaintext');
                         childFlags.push('getter');
                     }
                     if (data.type === 'plaintext')
-                        childFlags.push('styleless');
+                        childFlags.push('plaintext');
                     if (data.isSymbol) {
                         childFlags.push('symbol');
                     }
@@ -778,7 +837,8 @@
                         key: data.key,
                         value: data.value,
                         flags: childFlags,
-                        preview: childFlags.includes('styleless') ? data.value : null,
+                        preview: childFlags.includes('plaintext') && data.value,
+                        previewText: childFlags.includes('plaintext') && data.value,
                         target: data.value,
                         valueGetter: data.getter
                     });
@@ -834,11 +894,10 @@
                         parent: node,
                         key: String(range[0]),
                         value: value,
-                        preview: buildPreview(value)
                     } : {
                         parent: node,
                         value: value,
-                        preview: `[${range[0]} ${symbols.ellipsis} ${range[1]}]`,
+                        previewText: `[${range[0]} ${symbols.ellipsis} ${range[1]}]`,
                         flags: ['chunk'],
                         attachment: {
                             parentLevels: levels,
@@ -857,24 +916,23 @@
                         parent: node,
                         key: key,
                         value: value,
-                        preview: buildPreview(value),
                         flags: []
                     };
                     if (originalType === 'Map') {
-                        childNodeData.preview = `{${buildPreview(value.key, {
-                        type: 'styleless'
+                        childNodeData.previewText = `{${buildPreview(value.key, {
+                        type: 'plaintext'
                     })} => ${buildPreview(value.value, {
                         detail: false,
                         depth: 1,
-                        type: 'styleless'
+                        type: 'plaintext'
                     })}}`;
                         childNodeData.flags = ['dummy-object'];
                     }
                     if (originalType === 'Set') {
-                        childNodeData.preview = buildPreview(value.value, {
+                        childNodeData.previewText = buildPreview(value.value, {
                             detail: false,
                             depth: 1,
-                            type: 'styleless'
+                            type: 'plaintext'
                         });
                         childNodeData.flags = ['dummy-object'];
                     }
@@ -942,19 +1000,27 @@
         removeNode(node) {
             this.destroyNode(node);
             this.visibleNodes = [];
-            this._buildVisibleNodes(this.root);
+            this.buildVisibleNodes(this.root);
+            this.updateVisibleNodeIndex();
         }
         removeChildren(node) {
             this.destroyNode(node, false);
             this.visibleNodes = [];
-            this._buildVisibleNodes(this.root);
+            this.buildVisibleNodes(this.root);
+            this.updateVisibleNodeIndex();
         }
-        _buildVisibleNodes(node) {
+        buildVisibleNodes(node) {
             this.visibleNodes.push(node);
             if (node.expanded && node.childrenLoaded && node.children) {
                 for (const child of node.children) {
-                    this._buildVisibleNodes(child);
+                    this.buildVisibleNodes(child);
                 }
+            }
+        }
+        updateVisibleNodeIndex() {
+            this.visibleNodeIndex.clear();
+            for (let i = 0; i < this.visibleNodes.length; i++) {
+                this.visibleNodeIndex.set(this.visibleNodes[i], i);
             }
         }
     }
@@ -1042,7 +1108,8 @@
 
     class ObjectInspector {
         nodeManager;
-        rows;
+        rows = new Map();
+        rowElements = new WeakMap();
         options;
         inspectorEl = document.createElement('div');
         measureEl = document.createElement('div');
@@ -1050,7 +1117,8 @@
         menuEl = document.createElement('div');
         onScroll;
         onResize;
-        onWindowClick;
+        selection = null;
+        selecting = false;
         scrollSpeed = 0;
         lastScrollTop = 0;
         lastScrollTime = 0;
@@ -1083,8 +1151,7 @@
             const eventEmitter = new EventEmitter();
             this.on = (event, listener) => eventEmitter.on(event, listener);
             this.off = (event, listener) => eventEmitter.off(event, listener);
-            this.nodeManager = new NodeManager(clone(obj));
-            this.rows = new Map();
+            this.nodeManager = new InspectorNodeManager(clone(obj));
             this.options = options;
             const allowedValues = {
                 width: ['viewport', 'intrinsic'],
@@ -1112,10 +1179,11 @@
             this.inspectorEl.appendChild(this.rowsEl);
             this.measureRow = this.createRow(true);
             this.measureEl.appendChild(this.measureRow.row);
-            this.onWindowClick = () => {
-                this.menuEl.remove();
-            };
             window.addEventListener('click', this.onWindowClick);
+            this.inspectorEl.addEventListener("pointerdown", this.onInspectorPointerDown);
+            document.addEventListener('selectionchange', this.onSelectionChange);
+            document.addEventListener('copy', this.onCopy);
+            this.inspectorEl.addEventListener('dragstart', this.onDragStart);
             if (this.options.width === 'intrinsic') {
                 this.inspectorEl.style.overflowX = 'visible';
                 this.inspectorEl.classList.add(styles$1.widthIntrinsic);
@@ -1151,6 +1219,7 @@
                 requestAnimationFrame(() => {
                     renderPending = false;
                     this.render();
+                    this.restoreSelection();
                 });
             };
             this.measureDirtyRows();
@@ -1162,13 +1231,19 @@
         }
         destroy() {
             this.alive = false;
+            // remove listeners
             window.removeEventListener('click', this.onWindowClick);
+            this.inspectorEl.removeEventListener("pointerdown", this.onInspectorPointerDown);
+            document.removeEventListener('selectionchange', this.onSelectionChange);
+            document.removeEventListener('copy', this.onCopy);
+            this.inspectorEl.removeEventListener('dragstart', this.onDragStart);
             this.detachCurrentProvider();
             this.defaultViewportProvider.destroy();
             this.nodeManager.destroy();
             this.rows.clear();
             this.menuEl.remove();
             this.inspectorEl.remove();
+            this.selection = null;
         }
         detachCurrentProvider = () => {
             if (!this.viewportProvider) {
@@ -1216,7 +1291,6 @@
                     action: async () => {
                         try {
                             await navigator.clipboard.writeText(node.key);
-                            console.log("Copied key to clipboard:", node.key);
                         }
                         catch (err) {
                             console.error("Failed to copy", err);
@@ -1289,6 +1363,75 @@
                 }
                 this.measureDirtyRows();
             });
+        }
+        onWindowClick = () => {
+            this.menuEl.remove();
+            if (!this.selecting) {
+                this.selection = null;
+            }
+            else {
+                this.selecting = false;
+            }
+        };
+        onInspectorPointerDown = () => {
+            this.selecting = false;
+        };
+        onSelectionChange = () => {
+            const selection = window.getSelection();
+            if (this.selecting === false) {
+                this.selection = null;
+            }
+            this.selecting = !!selection && !selection.isCollapsed;
+            if (!selection || selection.rangeCount === 0)
+                return;
+            const range = selection.getRangeAt(0);
+            if (!this.inspectorEl.contains(range.commonAncestorContainer))
+                return;
+            const startRow = this.findRow(range.startContainer);
+            const endRow = this.findRow(range.endContainer);
+            if (!startRow || !endRow)
+                return;
+            const startOffset = getTextOffset(range.startContainer, range.startOffset, startRow.row);
+            const endOffset = getTextOffset(range.endContainer, range.endOffset, endRow.row);
+            this.selection = {
+                startNode: startRow.node,
+                endNode: endRow.node,
+                startOffset: startOffset,
+                endOffset: endOffset
+            };
+        };
+        onCopy = (e) => {
+            const selection = window.getSelection();
+            if (!selection || selection.isCollapsed)
+                return;
+            const isInside = (node) => {
+                return !!node && this.inspectorEl.contains(node);
+            };
+            if (!isInside(selection.anchorNode) || !isInside(selection.focusNode))
+                return;
+            const text = this.buildSelectionText();
+            if (text == null)
+                return;
+            e.preventDefault();
+            e.clipboardData?.setData("text/plain", text);
+        };
+        onDragStart = (e) => {
+            if (!this.selection)
+                return;
+            const selection = window.getSelection();
+            if (!selection || selection.isCollapsed)
+                return;
+            if (!this.inspectorEl.contains(selection.anchorNode) || !this.inspectorEl.contains(selection.focusNode))
+                return;
+            const text = this.buildSelectionText();
+            e.dataTransfer?.setData('text/plain', text);
+        };
+        findRow(node) {
+            const element = node instanceof HTMLElement ? node : node.parentElement;
+            const rowElement = element?.closest(`.${styles$1.row}`);
+            if (!rowElement)
+                return;
+            return this.rowElements.get(rowElement);
         }
         getRowRange = (topTolerance = 0, bottomTolerance = 0) => {
             const scrollTop = this.viewportProvider.getScrollTop();
@@ -1473,21 +1616,99 @@
             row.addEventListener('click', onClick);
             row.addEventListener('contextmenu', onContextMenu);
             preview.addEventListener('click', onPreviewClick);
-            return {
-                row, updatePosition, measureWidth, updateMaxWidth, update, destroy
+            const rowObject = {
+                get node() {
+                    return rowData.node;
+                },
+                row,
+                updatePosition, measureWidth, updateMaxWidth, update, destroy,
             };
+            this.rowElements.set(row, rowObject);
+            return rowObject;
         };
+        findRowByNode(node) {
+            return this.rows.get(node.id);
+        }
+        restoreSelection() {
+            if (!this.selection || this.selecting)
+                return;
+            const startRow = this.findRowByNode(this.selection.startNode);
+            const endRow = this.findRowByNode(this.selection.endNode);
+            if (!startRow || !endRow)
+                return;
+            const start = findTextPosition(startRow.row, this.selection.startOffset);
+            const end = findTextPosition(endRow.row, this.selection.endOffset);
+            const range = document.createRange();
+            range.setStart(start.node, start.offset);
+            range.setEnd(end.node, end.offset);
+            const sel = window.getSelection();
+            sel?.removeAllRanges();
+            sel?.addRange(range);
+        }
+        buildSelectionText() {
+            if (!this.selection)
+                return '';
+            let { startNode, endNode, startOffset, endOffset } = this.selection;
+            let start = this.nodeManager.visibleNodeIndex.get(startNode);
+            let end = this.nodeManager.visibleNodeIndex.get(endNode);
+            if (start == undefined || end == undefined)
+                return '';
+            if (start > end) {
+                let temp = start;
+                start = end;
+                end = temp;
+            }
+            if (start == end) {
+                const node = this.nodeManager.visibleNodes[start];
+                if (startOffset > endOffset) {
+                    let temp = startOffset;
+                    endOffset = startOffset;
+                    startOffset = temp;
+                }
+                return node.previewText.slice(startOffset, endOffset);
+            }
+            let lines = [];
+            for (let i = start; i <= end; i++) {
+                const node = this.nodeManager.visibleNodes[i];
+                const text = node.key && node.previewText ? `${node.key}: ${node.previewText}` : node.key || node.previewText;
+                if (i == start) {
+                    lines.push(text.slice(startOffset));
+                }
+                else if (i == end) {
+                    lines.push(text.slice(0, endOffset));
+                }
+                else {
+                    lines.push(text);
+                }
+            }
+            return lines.join('\n');
+        }
+        selectAll() {
+            const nodes = this.nodeManager.visibleNodes;
+            if (!nodes.length)
+                return;
+            const node = nodes[nodes.length - 1];
+            const text = node.key && node.previewText ? `${node.key}: ${node.previewText}` : node.key || node.previewText;
+            this.selection = {
+                startNode: nodes[0],
+                endNode: nodes[nodes.length - 1],
+                startOffset: 0,
+                endOffset: text.length
+            };
+            this.render();
+            this.restoreSelection();
+        }
         render = () => {
             if (!this.alive)
                 return;
             const scrollTop = this.viewportProvider.getScrollTop();
-            const viewportSize = this.viewportProvider.getClientHeight();
+            const viewportRows = this.viewportProvider.getClientHeight() / ROW_HEIGHT;
             let tolerant = this.scrollSpeed / ROW_HEIGHT;
+            if (tolerant > viewportRows) {
+                tolerant = viewportRows;
+            }
             let topTolerance = tolerant;
             let bottomTolerance = tolerant;
-            if (tolerant > viewportSize) {
-                tolerant = viewportSize;
-            }
             if (scrollTop > this.lastScrollTop) {
                 bottomTolerance = .9 * tolerant;
                 topTolerance = -0.4 * tolerant;
@@ -1497,47 +1718,76 @@
                 bottomTolerance = -0.4 * tolerant;
             }
             const rowRange = this.getRowRange(topTolerance, bottomTolerance);
-            const nodes = this.nodeManager.visibleNodes.slice(rowRange.start, rowRange.end + 1);
             const { visibleNodes } = this.nodeManager;
-            const visibleNodeIds = new Set();
-            for (let i = rowRange.start; i <= rowRange.end; i++) {
-                if (visibleNodes[i]) {
-                    visibleNodeIds.add(visibleNodes[i].id);
+            const selectionStartNode = this.selection?.startNode;
+            const selectionEndNode = this.selection?.endNode;
+            if (rowRange.end >= visibleNodes.length) {
+                rowRange.end = visibleNodes.length - 1;
+            }
+            if (rowRange.start !== -1 && rowRange.end !== -1) {
+                const nodesToRender = [];
+                const nodeIds = new Set();
+                for (let i = rowRange.start; i <= rowRange.end; i++) {
+                    const node = visibleNodes[i];
+                    if (!nodeIds.has(node.id)) {
+                        nodeIds.add(node.id);
+                        nodesToRender.push(i);
+                    }
+                }
+                if (selectionStartNode) {
+                    const index = this.nodeManager.visibleNodeIndex.get(selectionStartNode);
+                    if (index !== undefined) {
+                        if (!nodeIds.has(selectionStartNode.id)) {
+                            nodeIds.add(selectionStartNode.id);
+                            nodesToRender.push(index);
+                        }
+                    }
+                }
+                if (selectionEndNode) {
+                    const index = this.nodeManager.visibleNodeIndex.get(selectionEndNode);
+                    if (index !== undefined) {
+                        if (!nodeIds.has(selectionEndNode.id)) {
+                            nodeIds.add(selectionEndNode.id);
+                            nodesToRender.push(index);
+                        }
+                    }
+                }
+                for (const [id, row] of this.rows.entries()) {
+                    if (!nodeIds.has(id)) {
+                        row.row.remove();
+                        this.rows.delete(id);
+                    }
+                }
+                let last = null;
+                nodesToRender.sort((a, b) => a - b);
+                for (let i = nodesToRender.length - 1; i >= 0; i--) {
+                    const index = nodesToRender[i];
+                    const node = visibleNodes[index];
+                    let row = this.rows.get(node.id);
+                    if (!row) {
+                        row = this.createRow();
+                        if (last) {
+                            this.rowsEl.insertBefore(row.row, last);
+                        }
+                        else {
+                            this.rowsEl.appendChild(row.row);
+                        }
+                        this.rows.set(node.id, row);
+                    }
+                    row.update(node, index);
+                    if (this.options.width === 'viewport') {
+                        row.updateMaxWidth();
+                    }
+                    last = row.row;
                 }
             }
-            for (const [id, row] of this.rows.entries()) {
-                if (!visibleNodeIds.has(id)) {
+            else {
+                for (const [id, row] of this.rows.entries()) {
                     row.row.remove();
                     this.rows.delete(id);
                 }
             }
-            let last = null;
-            for (let i = nodes.length - 1; i >= 0; i--) {
-                const node = nodes[i];
-                let row;
-                if (!this.rows.has(node.id)) {
-                    row = this.createRow();
-                    if (last) {
-                        this.rowsEl.insertBefore(row.row, last);
-                    }
-                    else {
-                        this.rowsEl.appendChild(row.row);
-                    }
-                    this.rows.set(node.id, row);
-                }
-                else {
-                    row = this.rows.get(node.id);
-                }
-                row?.update(node, rowRange.start + i);
-                last = row?.row;
-            }
-            for (let i = nodes.length - 1; i >= 0; i--) {
-                const row = this.rows.get(nodes[i].id);
-                if (this.options.width === 'viewport') {
-                    row?.updateMaxWidth();
-                }
-            }
-            this.rowsEl.style.width = `${this.nodeManager.maxWidth}px`;
+            this.rowsEl.style.minWidth = `${this.nodeManager.maxWidth}px`;
         };
     }
 

@@ -1,5 +1,5 @@
 import { symbols } from "./symbols";
-import { functionToCode, getType, isElement, isExpandable, isProxy, safeString } from "./utils";
+import { functionToCode, getType, isElement, isExpandable, isProxy, safeString as _safeString } from "./utils";
 import styles from "./buildPreview.module.css";
 import { PREVIEW_DEPTH, PREVIEW_MAX_ARRAY_LENGTH, PREVIEW_MAX_MAP_LENGTH, PREVIEW_MAX_OBJECT_LENGTH, PREVIEW_MAX_SET_LENGTH, PREVIEW_MAX_STRING_LENGTH } from "./constants";
 import { BuildPreviewOptions } from "./types";
@@ -21,8 +21,12 @@ export function buildPreview(value: any, previewOptions?: BuildPreviewOptions): 
         self: null
     }, previewOptions);
 
+    function safeString(text: any): string {
+        return _safeString(text, options.type !== 'plaintext');
+    }
+
     function wrapText(text: string, type: string) {
-        if (options.type === 'styleless') return `${text}`;
+        if (options.type === 'plaintext') return `${text}`;
         return `<span class="${styles[type]}">${text}</span>`;
     }
 

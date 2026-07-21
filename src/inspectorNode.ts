@@ -1,8 +1,8 @@
 import { buildPreview } from "./buildPreview";
 import { NodeOptions } from "./types";
-import { EventEmitter, isExpandable, safeGetType } from "./utils";
+import { EventEmitter, isExpandable, safeEscape, safeGetType } from "./utils";
 
-export class Node extends EventEmitter {
+export class InspectorNode extends EventEmitter {
     private _visibleSize = 1;
 
     get visibleSize() {
@@ -16,7 +16,7 @@ export class Node extends EventEmitter {
     widthDirty = false;
 
     id!: number;
-    parent?: Node;
+    parent?: InspectorNode;
     level: number;
     key: any;
     value: any;
@@ -24,11 +24,12 @@ export class Node extends EventEmitter {
     valueGetter: (() => any) | null;
     hasChildren!: boolean;
     childrenLoaded: boolean = false;
-    children: Node[] = [];
+    children: InspectorNode[] = [];
     expanded: boolean = false;
 
     target: any | null;
     preview: string;
+    previewText: string;
     flags: string[];
     attachment: any | null;
     contentWidth: number = 0;
@@ -40,11 +41,17 @@ export class Node extends EventEmitter {
         value,
         valueGetter,
         preview,
+        previewText,
         flags = [],
         target,
         attachment = null
     }: NodeOptions) {
         super();
+
+        if (previewText && typeof previewText === 'string' && !preview) {
+            // no preview HTML is provided
+            preview = safeEscape(previewText);
+        }
 
         const valueType = safeGetType(value);
         try {
@@ -53,8 +60,15 @@ export class Node extends EventEmitter {
                     self: valueType.includes('Element') ? target : null
                 })
             }
+            if (typeof previewText !== 'string') {
+                previewText = buildPreview(value, {
+                    self: valueType.includes('Element') ? target : null,
+                    type: 'plaintext'
+                })
+            }
         } catch (e) {
             preview = `[Exception: ${e}]`;
+            previewText = preview;
         }
 
         this.id = id;
@@ -67,6 +81,7 @@ export class Node extends EventEmitter {
         this.hasChildren = isExpandable(value);
         this.target = target;
         this.preview = preview || '';
+        this.previewText = previewText || '';
         this.flags = flags;
         this.attachment = attachment || null;
     }

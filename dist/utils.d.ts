@@ -4,7 +4,7 @@ export declare function isElement(obj: any): boolean;
 export declare function safeEscape(html: string): string;
 export declare function functionToCode(fn: Function): string;
 export declare function capitalizeFirstLetter(val: string): string;
-export declare function safeString(str: any): string;
+export declare function safeString(str: any, escape?: boolean): string;
 export declare function isProxy(value: any): boolean;
 export declare function safeGetType(obj: any): string;
 /**
@@ -30,4 +30,12 @@ export declare class EventEmitter {
     emit(eventName: string, ...args: any[]): void;
     dispose(): void;
 }
+export declare function getTextOffset(container: Node, offset: number, root: HTMLElement): number;
+export declare function findTextPosition(root: HTMLElement, offset: number): {
+    node: Text;
+    offset: number;
+} | {
+    node: HTMLElement;
+    offset: number;
+};
 //# sourceMappingURL=utils.d.ts.map

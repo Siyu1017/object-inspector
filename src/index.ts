@@ -1,15 +1,16 @@
-import { clone, EventEmitter, isElement } from "./utils";
+import { clone, EventEmitter, findTextPosition, getTextOffset, isElement } from "./utils";
 import styles from "./index.module.css";
 import { ROW_HEIGHT, ROW_INDENT } from "./constants";
-import type { Node } from "./node";
-import { NodeManager } from "./nodeManager";
+import type { InspectorNode } from "./inspectorNode";
+import { InspectorNodeManager } from "./inspectorNodeManager";
 import { DefaultViewportProvider, ViewportProvider } from "./viewportProvider";
-import { ObjectInspectorOptions, Row, ViewportState } from "./types";
+import { ObjectInspectorOptions, Row, InspectorSelection, ViewportState } from "./types";
 import { RowData } from "./rowData";
 
 class ObjectInspector {
-    private readonly nodeManager: NodeManager;
-    private readonly rows: Map<number, Row>;
+    private readonly nodeManager: InspectorNodeManager;
+    private readonly rows = new Map<number, Row>();
+    private readonly rowElements = new WeakMap<Element, Row>();
     private readonly options: ObjectInspectorOptions;
 
     private readonly inspectorEl = document.createElement('div');
@@ -19,7 +20,9 @@ class ObjectInspector {
 
     private onScroll;
     private onResize;
-    private onWindowClick;
+
+    private selection: InspectorSelection | null = null;
+    private selecting = false;
     private scrollSpeed = 0;
     private lastScrollTop = 0;
     private lastScrollTime = 0;
@@ -62,8 +65,7 @@ class ObjectInspector {
         this.on = (event: string, listener: () => void) => eventEmitter.on(event, listener);
         this.off = (event: string, listener: () => void) => eventEmitter.off(event, listener);
 
-        this.nodeManager = new NodeManager(clone(obj));
-        this.rows = new Map();
+        this.nodeManager = new InspectorNodeManager(clone(obj));
         this.options = options;
 
         const allowedValues = {
@@ -97,10 +99,11 @@ class ObjectInspector {
         this.measureRow = this.createRow(true);
         this.measureEl.appendChild(this.measureRow.row);
 
-        this.onWindowClick = () => {
-            this.menuEl.remove();
-        }
         window.addEventListener('click', this.onWindowClick);
+        this.inspectorEl.addEventListener("pointerdown", this.onInspectorPointerDown);
+        document.addEventListener('selectionchange', this.onSelectionChange);
+        document.addEventListener('copy', this.onCopy);
+        this.inspectorEl.addEventListener('dragstart', this.onDragStart);
 
         if (this.options.width === 'intrinsic') {
             this.inspectorEl.style.overflowX = 'visible';
@@ -141,6 +144,7 @@ class ObjectInspector {
             requestAnimationFrame(() => {
                 renderPending = false;
                 this.render();
+                this.restoreSelection();
             });
         }
 
@@ -156,13 +160,21 @@ class ObjectInspector {
 
     destroy() {
         this.alive = false;
+
+        // remove listeners
         window.removeEventListener('click', this.onWindowClick);
+        this.inspectorEl.removeEventListener("pointerdown", this.onInspectorPointerDown);
+        document.removeEventListener('selectionchange', this.onSelectionChange);
+        document.removeEventListener('copy', this.onCopy);
+        this.inspectorEl.removeEventListener('dragstart', this.onDragStart);
+
         this.detachCurrentProvider();
         this.defaultViewportProvider.destroy();
         this.nodeManager.destroy();
         this.rows.clear();
         this.menuEl.remove();
         this.inspectorEl.remove();
+        this.selection = null;
     }
 
     private detachCurrentProvider = () => {
@@ -173,7 +185,6 @@ class ObjectInspector {
         this.viewportProvider.off("scroll", this.onScroll);
         this.viewportProvider.off("resize", this.onResize);
     }
-
 
     attachViewportProvider(provider: ViewportProvider) {
         if (this.viewportProvider === provider || !this.alive) {
@@ -206,7 +217,7 @@ class ObjectInspector {
         });
     }
 
-    private buildContextMenu = (node: Node, x: number, y: number) => {
+    private buildContextMenu = (node: InspectorNode, x: number, y: number) => {
         this.menuEl.innerHTML = '';
 
         const items = []
@@ -221,7 +232,6 @@ class ObjectInspector {
                 action: async () => {
                     try {
                         await navigator.clipboard.writeText(node.key);
-                        console.log("Copied key to clipboard:", node.key);
                     } catch (err) {
                         console.error("Failed to copy", err);
                     }
@@ -302,6 +312,81 @@ class ObjectInspector {
             }
             this.measureDirtyRows();
         });
+    }
+
+    private onWindowClick = () => {
+        this.menuEl.remove();
+        if (!this.selecting) {
+            this.selection = null;
+        } else {
+            this.selecting = false;
+        }
+    }
+
+    private onInspectorPointerDown = () => {
+        this.selecting = false;
+    }
+
+    private onSelectionChange = () => {
+        const selection = window.getSelection();
+        if (this.selecting === false) {
+            this.selection = null;
+        }
+        this.selecting = !!selection && !selection.isCollapsed;
+
+        if (!selection || selection.rangeCount === 0) return;
+
+        const range = selection.getRangeAt(0);
+        if (!this.inspectorEl.contains(range.commonAncestorContainer)) return;
+
+        const startRow = this.findRow(range.startContainer);
+        const endRow = this.findRow(range.endContainer);
+
+        if (!startRow || !endRow) return;
+
+        const startOffset = getTextOffset(range.startContainer, range.startOffset, startRow.row);
+        const endOffset = getTextOffset(range.endContainer, range.endOffset, endRow.row);
+
+        this.selection = {
+            startNode: startRow.node,
+            endNode: endRow.node,
+            startOffset: startOffset,
+            endOffset: endOffset
+        };
+    };
+
+    private onCopy = (e: ClipboardEvent) => {
+        const selection = window.getSelection();
+        if (!selection || selection.isCollapsed) return;
+
+        const isInside = (node: Node | null) => {
+            return !!node && this.inspectorEl.contains(node);
+        }
+        if (!isInside(selection.anchorNode) || !isInside(selection.focusNode)) return;
+
+        const text = this.buildSelectionText();
+        if (text == null) return;
+
+        e.preventDefault();
+        e.clipboardData?.setData("text/plain", text);
+    }
+
+    private onDragStart = (e: DragEvent) => {
+        if (!this.selection) return;
+
+        const selection = window.getSelection();
+        if (!selection || selection.isCollapsed) return;
+        if (!this.inspectorEl.contains(selection.anchorNode) || !this.inspectorEl.contains(selection.focusNode)) return;
+
+        const text = this.buildSelectionText();
+        e.dataTransfer?.setData('text/plain', text);
+    };
+
+    private findRow(node: Node): Row | undefined {
+        const element = node instanceof HTMLElement ? node : node.parentElement;
+        const rowElement = element?.closest(`.${styles.row}`);
+        if (!rowElement) return;
+        return this.rowElements.get(rowElement);
     }
 
     private getRowRange = (topTolerance = 0, bottomTolerance = 0) => {
@@ -388,7 +473,7 @@ class ObjectInspector {
         content.appendChild(colon);
         content.appendChild(preview);
 
-        function updateNode(node: Node) {
+        function updateNode(node: InspectorNode) {
             rowData.node = node;
 
             updateKey(rowData.node.key);
@@ -435,7 +520,7 @@ class ObjectInspector {
             return row.scrollWidth;
         }
 
-        function update(node: Node, index?: number) {
+        function update(node: InspectorNode, index?: number) {
             const flags = node.flags;
 
             updateNode(node);
@@ -513,24 +598,115 @@ class ObjectInspector {
         row.addEventListener('contextmenu', onContextMenu);
         preview.addEventListener('click', onPreviewClick);
 
-        return {
-            row, updatePosition, measureWidth, updateMaxWidth, update, destroy
+        const rowObject = {
+            get node() {
+                return rowData.node;
+            },
+            row,
+            updatePosition, measureWidth, updateMaxWidth, update, destroy,
         };
+
+        this.rowElements.set(row, rowObject);
+        return rowObject;
+    }
+
+    private findRowByNode(node: InspectorNode) {
+        return this.rows.get(node.id);
+    }
+
+    private restoreSelection() {
+        if (!this.selection || this.selecting) return;
+
+        const startRow = this.findRowByNode(this.selection.startNode);
+        const endRow = this.findRowByNode(this.selection.endNode);
+
+        if (!startRow || !endRow) return;
+
+        const start = findTextPosition(startRow.row, this.selection.startOffset);
+        const end = findTextPosition(endRow.row, this.selection.endOffset);
+
+        const range = document.createRange();
+
+        range.setStart(start.node, start.offset);
+        range.setEnd(end.node, end.offset);
+
+        const sel = window.getSelection();
+
+        sel?.removeAllRanges();
+        sel?.addRange(range);
+    }
+
+    private buildSelectionText(): string {
+        if (!this.selection) return '';
+
+        let { startNode, endNode, startOffset, endOffset } = this.selection;
+
+        let start = this.nodeManager.visibleNodeIndex.get(startNode);
+        let end = this.nodeManager.visibleNodeIndex.get(endNode);
+
+        if (start == undefined || end == undefined) return '';
+
+        if (start > end) {
+            let temp = start;
+            start = end;
+            end = temp;
+        }
+        if (start == end) {
+            const node = this.nodeManager.visibleNodes[start];
+            if (startOffset > endOffset) {
+                let temp = startOffset;
+                endOffset = startOffset;
+                startOffset = temp;
+            }
+            return node.previewText.slice(startOffset, endOffset);
+        }
+
+        let lines: string[] = [];
+        for (let i = start; i <= end; i++) {
+            const node = this.nodeManager.visibleNodes[i];
+            const text = node.key && node.previewText ? `${node.key}: ${node.previewText}` : node.key || node.previewText;
+            if (i == start) {
+                lines.push(text.slice(startOffset));
+            } else if (i == end) {
+                lines.push(text.slice(0, endOffset));
+            } else {
+                lines.push(text);
+            }
+        }
+        return lines.join('\n');
+    }
+
+    private selectAll() {
+        const nodes = this.nodeManager.visibleNodes;
+
+        if (!nodes.length) return;
+
+        const node = nodes[nodes.length - 1];
+        const text = node.key && node.previewText ? `${node.key}: ${node.previewText}` : node.key || node.previewText;
+
+        this.selection = {
+            startNode: nodes[0],
+            endNode: nodes[nodes.length - 1],
+            startOffset: 0,
+            endOffset: text.length
+        };
+
+        this.render();
+        this.restoreSelection();
     }
 
     private render = () => {
         if (!this.alive) return;
 
         const scrollTop = this.viewportProvider.getScrollTop();
-        const viewportSize = this.viewportProvider.getClientHeight();
+        const viewportRows = this.viewportProvider.getClientHeight() / ROW_HEIGHT;
         let tolerant = this.scrollSpeed / ROW_HEIGHT;
-        let topTolerance = tolerant;
-        let bottomTolerance = tolerant;
-
-        if (tolerant > viewportSize) {
-            tolerant = viewportSize;
+        if (tolerant > viewportRows) {
+            tolerant = viewportRows;
         }
 
+        let topTolerance = tolerant;
+        let bottomTolerance = tolerant;
         if (scrollTop > this.lastScrollTop) {
             bottomTolerance = .9 * tolerant;
             topTolerance = -.4 * tolerant;
@@ -540,51 +716,84 @@ class ObjectInspector {
         }
 
         const rowRange = this.getRowRange(topTolerance, bottomTolerance);
-        const nodes = this.nodeManager.visibleNodes.slice(rowRange.start, rowRange.end + 1);
-
         const { visibleNodes } = this.nodeManager;
-        const visibleNodeIds = new Set();
-        for (let i = rowRange.start; i <= rowRange.end; i++) {
-            if (visibleNodes[i]) {
-                visibleNodeIds.add(visibleNodes[i].id);
-            }
+        const selectionStartNode = this.selection?.startNode;
+        const selectionEndNode = this.selection?.endNode;
+
+        if (rowRange.end >= visibleNodes.length) {
+            rowRange.end = visibleNodes.length - 1;
         }
 
-        for (const [id, row] of this.rows.entries()) {
-            if (!visibleNodeIds.has(id)) {
+        if (rowRange.start !== -1 && rowRange.end !== -1) {
+            const nodesToRender: number[] = [];
+            const nodeIds = new Set<number>();
+
+            for (let i = rowRange.start; i <= rowRange.end; i++) {
+                const node = visibleNodes[i];
+                if (!nodeIds.has(node.id)) {
+                    nodeIds.add(node.id);
+                    nodesToRender.push(i);
+                }
+            }
+
+            if (selectionStartNode) {
+                const index = this.nodeManager.visibleNodeIndex.get(selectionStartNode);
+                if (index !== undefined) {
+                    if (!nodeIds.has(selectionStartNode.id)) {
+                        nodeIds.add(selectionStartNode.id);
+                        nodesToRender.push(index);
+                    }
+                }
+            }
+
+            if (selectionEndNode) {
+                const index = this.nodeManager.visibleNodeIndex.get(selectionEndNode);
+                if (index !== undefined) {
+                    if (!nodeIds.has(selectionEndNode.id)) {
+                        nodeIds.add(selectionEndNode.id);
+                        nodesToRender.push(index);
+                    }
+                }
+            }
+
+            for (const [id, row] of this.rows.entries()) {
+                if (!nodeIds.has(id)) {
+                    row.row.remove();
+                    this.rows.delete(id);
+                }
+            }
+
+            let last: Element | null = null;
+            nodesToRender.sort((a, b) => a - b);
+            for (let i = nodesToRender.length - 1; i >= 0; i--) {
+                const index = nodesToRender[i];
+                const node = visibleNodes[index];
+                let row = this.rows.get(node.id);
+                if (!row) {
+                    row = this.createRow();
+                    if (last) {
+                        this.rowsEl.insertBefore(row.row, last);
+                    } else {
+                        this.rowsEl.appendChild(row.row);
+                    }
+                    this.rows.set(node.id, row);
+                }
+
+                row.update(node, index);
+                if (this.options.width === 'viewport') {
+                    row.updateMaxWidth();
+                }
+
+                last = row.row;
+            }
+        } else {
+            for (const [id, row] of this.rows.entries()) {
                 row.row.remove();
                 this.rows.delete(id);
             }
         }
 
-        let last = null;
-        for (let i = nodes.length - 1; i >= 0; i--) {
-            const node = nodes[i];
-            let row;
-            if (!this.rows.has(node.id)) {
-                row = this.createRow();
-                if (last) {
-                    this.rowsEl.insertBefore(row.row, last);
-                } else {
-                    this.rowsEl.appendChild(row.row);
-                }
-                this.rows.set(node.id, row);
-            } else {
-                row = this.rows.get(node.id);
-            }
-
-            row?.update(node, rowRange.start + i);
-            last = row?.row;
-        }
-
-        for (let i = nodes.length - 1; i >= 0; i--) {
-            const row = this.rows.get(nodes[i].id);
-            if (this.options.width === 'viewport') {
-                row?.updateMaxWidth();
-            }
-        }
-
-        this.rowsEl.style.width = `${this.nodeManager.maxWidth}px`;
+        this.rowsEl.style.minWidth = `${this.nodeManager.maxWidth}px`;
     }
 }
 

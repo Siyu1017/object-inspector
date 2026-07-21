@@ -3,6 +3,7 @@ import { ObjectInspectorOptions } from "./types";
 declare class ObjectInspector {
     private readonly nodeManager;
     private readonly rows;
+    private readonly rowElements;
     private readonly options;
     private readonly inspectorEl;
     private readonly measureEl;
@@ -10,7 +11,8 @@ declare class ObjectInspector {
     private readonly menuEl;
     private onScroll;
     private onResize;
-    private onWindowClick;
+    private selection;
+    private selecting;
     private scrollSpeed;
     private lastScrollTop;
     private lastScrollTime;
@@ -32,8 +34,18 @@ declare class ObjectInspector {
     private syncViewport;
     private buildContextMenu;
     private measureDirtyRows;
+    private onWindowClick;
+    private onInspectorPointerDown;
+    private onSelectionChange;
+    private onCopy;
+    private onDragStart;
+    private findRow;
     private getRowRange;
     private createRow;
+    private findRowByNode;
+    private restoreSelection;
+    private buildSelectionText;
+    private selectAll;
     private render;
 }
 export default ObjectInspector;

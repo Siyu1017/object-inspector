@@ -1,4 +1,4 @@
-import { Node } from "./node";
+import { InspectorNode } from "./inspectorNode";
 
 export interface ViewportState {
     scrollTop: number;
@@ -8,11 +8,12 @@ export interface ViewportState {
 }
 
 export type Row = {
+    node: InspectorNode;
     row: HTMLDivElement;
     updatePosition: (index: number) => void;
     updateMaxWidth: (width?: number) => void;
     measureWidth: () => number;
-    update: (node: Node, index?: number) => void;
+    update: (node: InspectorNode, index?: number) => void;
     destroy: () => void;
 }
 
@@ -26,11 +27,12 @@ export type ObjectInspectorOptions = {
 }
 
 export type NodeOptions = {
-    parent?: Node;
+    parent?: InspectorNode;
     key?: string;
     value: any;
     valueGetter?: () => any;
     preview?: string;
+    previewText?: string;
     flags?: string[];
     originalType?: string;
     target?: any;
@@ -50,19 +52,13 @@ export type BuildPreviewOptions = {
     maxSetLength?: number,
     maxMapLength?: number,
     maxObjectLength?: number,
-    type?: string,
+    type?: 'plaintext' | 'normal',
     self?: any
 }
 
-export interface PropertySnapshot {
-    key: string | symbol;
-    value?: any;
-    type: string;
-    getter?: boolean;
-    enumerable: boolean;
-}
-
-export interface ObjectSnapshot {
-    type: string;
-    properties: PropertySnapshot[];
-}
+export type InspectorSelection = {
+    startNode: InspectorNode;
+    endNode: InspectorNode;
+    startOffset: number;
+    endOffset: number;
+};

@@ -42,11 +42,11 @@ export function capitalizeFirstLetter(val: string): string {
     return String(val).charAt(0).toUpperCase() + String(val).slice(1);
 }
 
-export function safeString(str: any): string {
+export function safeString(str: any, escape = true): string {
     if (typeof str !== 'string') {
         str = String(str);
     }
-    return safeEscape(str);
+    return escape ? safeEscape(str) : str;
 }
 
 export function isProxy(value: any) {
@@ -215,4 +215,36 @@ export class EventEmitter {
     dispose() {
         this.listeners.clear();
     }
+}
+
+export function getTextOffset(container: Node, offset: number, root: HTMLElement) {
+    const range = document.createRange();
+
+    range.setStart(root, 0);
+    range.setEnd(container, offset);
+
+    return range.toString().length;
+}
+
+export function findTextPosition(root: HTMLElement, offset: number) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+
+    let current = 0;
+    while (walker.nextNode()) {
+        const textNode = walker.currentNode as Text;
+        const length = textNode.length;
+
+        if (offset <= current + length) {
+            return {
+                node: textNode,
+                offset: offset - current
+            };
+        }
+        current += length;
+    }
+
+    return {
+        node: root,
+        offset: root.childNodes.length
+    };
 }

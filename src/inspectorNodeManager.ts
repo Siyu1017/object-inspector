@@ -1,15 +1,16 @@
 import { buildPreview } from "./buildPreview";
 import { symbols } from "./symbols";
 import { NodeOptions, NodeExpandOptions } from "./types";
-import { Node } from "./node";
+import { InspectorNode } from "./inspectorNode";
 import { extractKeys, getType, isElement, isExpandable } from "./utils";
 
-export class NodeManager {
+export class InspectorNodeManager {
     nextId: number;
-    nodeMap: Map<number, Node>;
+    nodeMap: Map<number, InspectorNode>;
     dirtyNodes: number[];
     root: any;
-    visibleNodes: Node[];
+    visibleNodes: InspectorNode[] = [];
+    visibleNodeIndex = new Map<InspectorNode, number>();
     alive = true;
     maxWidth = 0;
 
@@ -22,22 +23,22 @@ export class NodeManager {
             value: rootValue
         });
 
-        this.visibleNodes = [];
-        this._buildVisibleNodes(this.root);
+        this.buildVisibleNodes(this.root);
+        this.updateVisibleNodeIndex();
     }
     allocateId() {
         return this.nextId++;
     }
-    updateContentWidth(node: Node, width: number) {
+    updateContentWidth(node: InspectorNode, width: number) {
         node.contentWidth = width;
         node.widthDirty = false;
 
         if (width >= this.maxWidth) {
             this.maxWidth = width;
-            
+
         }
     }
-    markWidthDirty(node: Node) {
+    markWidthDirty(node: InspectorNode) {
         if (node.widthDirty) return;
         node.widthDirty = true;
         this.dirtyNodes.push(node.id);
@@ -57,11 +58,12 @@ export class NodeManager {
         value,
         valueGetter,
         preview,
+        previewText,
         flags = [],
         target,
         attachment = null
-    }: NodeOptions): Node {
-        const node = new Node(this.allocateId(), { parent, key, value, valueGetter, preview, flags, target, attachment });
+    }: NodeOptions): InspectorNode {
+        const node = new InspectorNode(this.allocateId(), { parent, key, value, valueGetter, preview, previewText, flags, target, attachment });
 
         node.contentWidth = 0;
         node.path = this.getNodePath(node);
@@ -71,7 +73,7 @@ export class NodeManager {
 
         return node;
     }
-    accessNodeGetter(node: Node) {
+    accessNodeGetter(node: InspectorNode) {
         if (!node.valueGetter) return;
         try {
             node.value = node.valueGetter();
@@ -85,27 +87,33 @@ export class NodeManager {
                 node.preview = buildPreview(node.value, {
                     detail: false
                 })
+                node.previewText = buildPreview(node.value, {
+                    detail: false,
+                    type: 'plaintext'
+                })
             } else {
                 node.preview = buildPreview(node.value);
+                node.previewText = buildPreview(node.value, { type: 'plaintext' });
             }
         } catch (e) {
             node.value = `[Exception: ${e}]`;
             node.valueType = 'string';
             node.hasChildren = false;
-            node.flags.push('styleless');
+            node.flags.push('plaintext');
             node.preview = node.value;
+            node.previewText = node.value;
         }
 
         this.markWidthDirty(node);
     }
-    expandNode(node: Node, options: NodeExpandOptions = {
+    expandNode(node: InspectorNode, options: NodeExpandOptions = {
         prototype: true,
         symbols: true
     }) {
         if (!this.alive) return false;
         if (node.parent && !this.checkParentExpanded(node)) return false;
 
-        let expandQueue: Node[] = [];
+        let expandQueue: InspectorNode[] = [];
 
         if (!node.childrenLoaded) {
             const type = getType(node.value);
@@ -131,6 +139,7 @@ export class NodeManager {
                     key: '[[Entries]]',
                     value: arr,
                     preview: '',
+                    previewText: '',
                     flags: ['[[entries]]'],
                     attachment: {
                         originalType: type
@@ -161,11 +170,17 @@ export class NodeManager {
                 options.prototype === true
             ) {
                 let preview;
+                let previewText;
                 if (type.includes('Element')) {
                     preview = getType(__proto__);
+                    previewText = preview;
                 } else {
                     preview = buildPreview(__proto__, {
                         detail: false
+                    });
+                    previewText = buildPreview(__proto__, {
+                        detail: false,
+                        type: 'plaintext'
                     });
                 }
                 const child = this.createNode({
@@ -174,7 +189,8 @@ export class NodeManager {
                     value: __proto__,
                     flags: ['[[prototype]]'],
                     target: (type.includes('Element')) ? node.target : node.value,
-                    preview: preview
+                    preview: preview,
+                    previewText: previewText
                 })
                 node.children.push(child);
             }
@@ -184,7 +200,8 @@ export class NodeManager {
         node.expanded = true;
         this.updateVisibleSize(node);
         this.visibleNodes = [];
-        this._buildVisibleNodes(this.root);
+        this.buildVisibleNodes(this.root);
+        this.updateVisibleNodeIndex();
 
         for (const item of expandQueue) {
             this.expandNode(item);
@@ -194,7 +211,7 @@ export class NodeManager {
 
         return true;
     }
-    collapseNode(node: Node) {
+    collapseNode(node: InspectorNode) {
         if (node.valueGetter) {
             this.removeChildren(node);
             node.childrenLoaded = false;
@@ -212,6 +229,7 @@ export class NodeManager {
                 child.value = '(...)';
                 child.valueType = 'string';
                 child.preview = child.value;
+                child.previewText = child.value;
                 child.expanded = false;
             }
         }
@@ -219,10 +237,11 @@ export class NodeManager {
         node.expanded = false;
         this.updateVisibleSize(node);
         this.visibleNodes = [];
-        this._buildVisibleNodes(this.root);
+        this.buildVisibleNodes(this.root);
+        this.updateVisibleNodeIndex();
         this.recalculateMaxWidth();
     }
-    destroyNode(node: Node, self = true) {
+    destroyNode(node: InspectorNode, self = true) {
         for (const child of node.children) {
             this.destroyNode(child);
         }
@@ -244,7 +263,7 @@ export class NodeManager {
             node.dispose();
         }
     }
-    private createNodes(node: Node, keys: PropertyKey[], type: string[]) {
+    private createNodes(node: InspectorNode, keys: PropertyKey[], type: string[]) {
         if (!this.alive) return;
 
         keys.forEach(key => {
@@ -312,12 +331,12 @@ export class NodeManager {
             datas.forEach(data => {
                 let childFlags = [...flags];
                 if (data.type === 'getter') {
-                    childFlags.push('styleless');
+                    childFlags.push('plaintext');
                     childFlags.push('getter');
                 }
 
                 if (data.type === 'plaintext')
-                    childFlags.push('styleless');
+                    childFlags.push('plaintext');
 
                 if (data.isSymbol) {
                     childFlags.push('symbol');
@@ -328,7 +347,8 @@ export class NodeManager {
                     key: data.key,
                     value: data.value,
                     flags: childFlags,
-                    preview: childFlags.includes('styleless') ? data.value : null,
+                    preview: childFlags.includes('plaintext') && data.value,
+                    previewText: childFlags.includes('plaintext') && data.value,
                     target: data.value,
                     valueGetter: data.getter
                 })
@@ -343,7 +363,7 @@ export class NodeManager {
         this.visibleNodes.length = 0;
         this.nodeMap.clear();
     }
-    getNodePath(node: Node): string {
+    getNodePath(node: InspectorNode): string {
         let path = node.parent?.path || '';
 
         if (node.parent?.flags.includes('[[prototype]]')) return String(node.key);
@@ -365,7 +385,7 @@ export class NodeManager {
 
         return path;
     }
-    handleLargeArray(node: Node, valueRef: any, originalType: string, options: NodeExpandOptions) {
+    handleLargeArray(node: InspectorNode, valueRef: any, originalType: string, options: NodeExpandOptions) {
         const { parentLevels, startIndex } = node.attachment || {};
         const len = valueRef.length;
         const start = startIndex || 0;
@@ -390,11 +410,10 @@ export class NodeManager {
                     parent: node,
                     key: String(range[0]),
                     value: value,
-                    preview: buildPreview(value)
                 } : {
                     parent: node,
                     value: value,
-                    preview: `[${range[0]} ${symbols.ellipsis} ${range[1]}]`,
+                    previewText: `[${range[0]} ${symbols.ellipsis} ${range[1]}]`,
                     flags: ['chunk'],
                     attachment: {
                         parentLevels: levels,
@@ -412,25 +431,24 @@ export class NodeManager {
                     parent: node,
                     key: key,
                     value: value,
-                    preview: buildPreview(value),
                     flags: []
                 }
 
                 if (originalType === 'Map') {
-                    childNodeData.preview = `{${buildPreview(value.key, {
-                        type: 'styleless'
+                    childNodeData.previewText = `{${buildPreview(value.key, {
+                        type: 'plaintext'
                     })} => ${buildPreview(value.value, {
                         detail: false,
                         depth: 1,
-                        type: 'styleless'
+                        type: 'plaintext'
                     })}}`
                     childNodeData.flags = ['dummy-object']
                 }
                 if (originalType === 'Set') {
-                    childNodeData.preview = buildPreview(value.value, {
+                    childNodeData.previewText = buildPreview(value.value, {
                         detail: false,
                         depth: 1,
-                        type: 'styleless'
+                        type: 'plaintext'
                     });
                     childNodeData.flags = ['dummy-object']
                 }
@@ -440,8 +458,8 @@ export class NodeManager {
             }
         }
     }
-    updateVisibleSize(node: Node) {
-        let current: Node | undefined = node;
+    updateVisibleSize(node: InspectorNode) {
+        let current: InspectorNode | undefined = node;
 
         while (current != undefined) {
             const size = current.calculateVisibleSize();
@@ -449,7 +467,7 @@ export class NodeManager {
             current = current.parent;
         }
     }
-    async expandNodeRecursively(node: Node): Promise<boolean> {
+    async expandNodeRecursively(node: InspectorNode): Promise<boolean> {
         if (!this.alive) return false;
 
         try {
@@ -484,10 +502,10 @@ export class NodeManager {
 
         return true;
     }
-    checkParentExpanded(node: Node): boolean {
+    checkParentExpanded(node: InspectorNode): boolean {
         return node.parent ? node.parent.expanded && this.checkParentExpanded(node.parent) : true;
     }
-    findChildrenSize(node: Node) {
+    findChildrenSize(node: InspectorNode) {
         if (!node.hasChildren || !node.childrenLoaded || !node.expanded) return 0;
 
         let size = 0;
@@ -497,22 +515,30 @@ export class NodeManager {
 
         return size;
     }
-    removeNode(node: Node) {
+    removeNode(node: InspectorNode) {
         this.destroyNode(node);
         this.visibleNodes = [];
-        this._buildVisibleNodes(this.root);
+        this.buildVisibleNodes(this.root);
+        this.updateVisibleNodeIndex();
     }
-    removeChildren(node: Node) {
+    removeChildren(node: InspectorNode) {
         this.destroyNode(node, false);
         this.visibleNodes = [];
-        this._buildVisibleNodes(this.root);
+        this.buildVisibleNodes(this.root);
+        this.updateVisibleNodeIndex();
     }
-    _buildVisibleNodes(node: Node) {
+    buildVisibleNodes(node: InspectorNode) {
         this.visibleNodes.push(node);
         if (node.expanded && node.childrenLoaded && node.children) {
             for (const child of node.children) {
-                this._buildVisibleNodes(child);
+                this.buildVisibleNodes(child);
             }
+        }
+    }
+    updateVisibleNodeIndex() {
+        this.visibleNodeIndex.clear();
+        for (let i = 0; i < this.visibleNodes.length; i++) {
+            this.visibleNodeIndex.set(this.visibleNodes[i], i);
         }
     }
 }
